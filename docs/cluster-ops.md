@@ -1,0 +1,283 @@
+# Running the cluster: install, storage, upgrades
+
+## Topology
+
+The existing PoE switch carries a dedicated cluster VLAN. A management node
+(Pi Zero 2 W or Quartz64 A, [management-node.md](management-node.md)) provides
+DHCP/TFTP/DNS and holzkube-manager, the Pi 5 is the control plane (API) and NFS,
+and the Quartz boards are workers. Full layout, VLAN settings and the PXE install
+flow are in [netboot.md](netboot.md).
+
+- Load balancing, DNS and TLS run in-cluster: MetalLB/Cilium L2 VIPs in VLAN 20,
+  Gateway API, external-dns, cert-manager, and an OIDC provider (Pocket ID /
+  Authelia / Authentik). Outside access: forward 443 on the Express 7 to the
+  ingress VIP, or use Cloudflare Tunnel.
+- Onsite LAN hardware reaches the API and VIPs through the Express 7 (inter-VLAN
+  routing + firewall zones). mDNS/SSDP need UniFi's mDNS reflector.
+- If you later want routing off the gateway, a Layer 3 switch (e.g. UniFi
+  Enterprise 8 PoE) can host the VLAN 20 gateway instead. Nothing else changes.
+- Talos has no in-kernel NFS server (`nfsd`). NFS on the Pi 5 runs as NFS-Ganesha in a pod.
+
+## Flavors
+
+| flavor | kernel | extensions | use |
+|---|---|---|---|
+| `stock` | Talos kernel as released | official `drbd` | default |
+| `media` | same kernel + `kernel/media.config` (Hantro G1/VEPU, RGA) | `drbd` rebuilt for that kernel | SOQuartz/Quartz64 nodes doing video decode (Scrypted) |
+
+Talos enforces module signatures, so the media flavor rebuilds the kernel, its DRBD
+module, `installer-base` and `imager` together (`.github/workflows/media-kernel.yaml`,
+images under `ghcr.io/s-collison/talos-media/*`). Media nodes also get
+`talos/patches/media.yaml` (loads `hantro_vpu`, `rockchip_rga`, labels the node).
+
+## What CI publishes
+
+### Tracking upstream (`track.yaml`, daily)
+
+| reads | writes |
+|---|---|
+| latest siderolabs/talos release, its Makefile `PKGS` | `Makefile`/`.kres.yaml` `PKGS` default (local builds), `talos/patches/install-*.yaml`, `talos/tuppr/upgrades.yaml` |
+| latest siderolabs/sbc-rockchip release: Pkgfile, Makefile, installer go.mod/go.sum | `Pkgfile` (U-Boot, TF-A, rkbin + checksums, bldr), `TOOLS`, `installers/quartz64/src/go.{mod,sum}`, `go.work` |
+
+It also moves `FFMPEG_REF` in `containers/ffmpeg-v4l2request/Dockerfile` to the head of
+`FFMPEG_BRANCH`. The edits are made by `hack/update-pins.py` (run it locally with the same
+arguments to reproduce). If build inputs changed, `make target-sbc-quartz PLATFORM=linux/arm64`
+must pass:
+
+- pass → commit to `main`, close any open `auto-update` PR;
+- fail → force-push `auto/update-pins`, open/comment the `auto-update` PR with the run link,
+  and stop. Fix on that branch and merge; the merge builds and releases it. PR checks are only
+  a quick lint (they don't build the overlay).
+
+Then, in the same run (and on every merge to `main` that touches build inputs):
+
+- **tag**: the tag is the version. Latest upstream Talos has no tag here yet →
+  tag `main` `vX.Y.Z` (daily run only, after the pins built). Build inputs changed on `main` since `vX.Y.Z` → the tag is moved to `main` and the release rebuilt (no `-rN` tags; the tag always means "latest build of that upstream version").
+  Otherwise nothing. The new tag is pushed and `images.yaml` is dispatched on it.
+- **containers**: `media-containers.yaml` is dispatched if `containers/` changed since the
+  commit recorded in the published image's labels, or the Scrypted/Debian base digest moved.
+
+Installers are pushed as `talos-installer-<board>[-media]:<talos>` (what tuppr upgrades
+to; a rebuild replaces it) and the release assets are replaced with each rebuild.
+
+To build an older Talos, push a tag for it yourself (`git tag -a v1.14.4 -m v1.14.4 && git push
+origin v1.14.4`); the build reads the version from the tag. To stop new versions arriving,
+disable the track workflow (Actions → track → ⋯ → Disable).
+
+### Building (`images.yaml`)
+
+**U-Boot configs of a build:** every run's page has the artifact **u-boot-configs** with each
+board's final `.config` and minimal `_defconfig` (90 days), and the run summary shows the
+MAC/network option table. The build also comments on the PR that was merged with the table,
+the results and that link. Download with
+`gh run download <run-id> -n u-boot-configs`.
+
+**Manual builds of any upstream version** (betas, older releases, rebuilds): Actions →
+**images** → *Run workflow* on `main`, enter the upstream Talos tag (`v1.15.0-beta.1`,
+`v1.14.5`, …). It publishes a **prerelease `build-<talos>`** and pushes the installers as
+`talos-installer-<board>[-media]:<talos>`. Running it again for the same version deletes that
+release and its tag and publishes the new build in their place, so regenerate as often as you
+like. Untick *publish* for a test run that only keeps 7-day workflow artifacts. These builds
+never touch the `vX.Y.Z` tags the tracker manages, never become the "latest" release, and
+report failures through the same `build-failure` issue.
+From the CLI: `gh workflow run images.yaml --ref main -f talos_version=v1.15.0-beta.1`.
+
+
+Runs on a `v*` tag (created by track, or pushed by you) or by hand. Failures on tag runs
+open/comment an issue labelled `build-failure`. Run by hand on a branch, it builds and
+uploads 7-day workflow artifacts without a release. It:
+
+1. takes the Talos version from the tag (`v1.14.5` → Talos v1.14.5) and the kernel build
+   (`PKGS`) from that Talos release's Makefile;
+2. builds the media kernel stack if it's missing (`media-kernel.yaml`), and the overlay
+   `ghcr.io/s-collison/sbc-quartz:<tag>` (e.g. `v1.14.5`);
+3. for each flavor × board (`quartz64-a`, `soquartz-blade`, `soquartz-model-a`):
+   - `talos-<talos>-<board>[-media].raw.xz`, verified (idbloader, arm64 GRUB, fdtfile, PXE);
+   - upgrade installer `ghcr.io/s-collison/talos-installer-<board>[-media]:<talos>`;
+4. builds `netboot-<talos>-<flavor>.tar.gz` (raw kernel Image, initramfs, DTBs,
+   pxelinux.cfg, U-Boot binaries);
+5. creates the GitHub Release for the tag with all of it and checksums.
+
+`media-containers.yaml` builds `ghcr.io/s-collison/scrypted-rk3566` and
+`ghcr.io/s-collison/ffmpeg-v4l2request` (FFmpeg 8.1 + V4L2 Request hwaccel).
+
+## First install (simplest bare-metal path)
+
+**Write the release image straight onto the disk the board will boot from**,
+then apply config. Don't boot the SD card and let Talos "install" to eMMC:
+in install mode, Talos 1.14 auto-selects systemd-boot whenever U-Boot's UEFI
+is present. These images deliberately use GRUB, which is what Sidero ships
+for Rockchip boards. Upgrades keep whatever boot loader is already on the disk.
+
+| board | boot disk | how to write it |
+|---|---|---|
+| Quartz64 A | eMMC module (recommended) or SD | eMMC: Pine64 USB eMMC adapter, then `dd` from the Mac |
+| SOQuartz (Blade / Model-A) | eMMC on the module, or the baseboard SD | eMMC: rpiboot-style USB mass storage isn't available, so flash SD, or use a Pine64 eMMC module + adapter |
+
+1. `xz -dc talos-<ver>-<board>.raw.xz | sudo dd of=/dev/rdiskN bs=4m` onto that disk, insert, power on.
+   The node comes up in maintenance mode and gets a DHCP address.
+2. Generate and apply the config. `install.disk` is the disk you just wrote, so
+   Talos sees it's already installed and doesn't reinstall:
+
+   ```sh
+   talosctl gen config homelab https://<cp-ip>:6443 \
+     --config-patch @talos/patches/drbd.yaml \
+     --config-patch @talos/patches/tuppr.yaml
+   talosctl apply-config --insecure -n <ip> -f worker.yaml \
+     --config-patch @talos/patches/install-soquartz-blade.yaml
+   ```
+
+   `machine.install.image` must be **the board's own installer**. The stock
+   `ghcr.io/siderolabs/installer` and Image Factory installers don't contain
+   this overlay.
+3. The RK3566 boot ROM can't boot NVMe directly. Keep Talos on eMMC/SD and give the M.2 SSD to storage.
+
+## Network boot
+
+U-Boot on every board has PXE. Local disks are tried first, then the network.
+CI publishes a TFTP tree per flavor (`netboot-<talos>-<flavor>.tar.gz`). See
+[netboot.md](netboot.md) for the management node setup and the PXE → holzkube → install flow.
+
+## Worker storage and DRBD / LINSTOR (Piraeus)
+
+The images already contain the `drbd` extension and `drbd.yaml` loads it. Storage is
+configured per node in two stages, with the standard images (machine config only).
+
+### Stage 1: cap `/var` before the node joins
+
+Add `talos/patches/ephemeral-cap.yaml` to every Quartz/SOQuartz worker's **first** config
+(holzkube stored patch). EPHEMERAL (`/var`) stops at 32 GiB instead of filling the eMMC, and
+the rest stays unallocated. This is the only part that must be decided up front: EPHEMERAL is
+sized when it's created and never shrinks (the patch has the wipe command if you need to redo it).
+
+Everything on the Talos side is machine config: the `VolumeConfig` (stage 1) and the
+`RawVolumeConfig` (stage 2) are documents in the node's config, nothing is partitioned by hand.
+Two newer Talos documents don't fit here:
+
+- `LVMLogicalVolumeConfig` (Talos-managed LVM volumes) would make Talos own the volume
+  group. LINSTOR needs to create and own its LVM thin pool, so Talos only hands it a raw
+  partition. Mirroring is DRBD's job across nodes, not LVM RAID inside one node.
+- `UnattendedInstallConfig` installs Talos from ISO/PXE boot media. These boards are
+  flashed with a disk image and boot it directly, so there is no install step. It matters
+  only for the optional netboot path, and the install-image guard already handles it.
+
+### Stage 2: give each node its LINSTOR partition, any time later
+
+Per node, on the running node, pick where its replicated storage lives and edit the size:
+
+| patch | partition `r-drbd` on | when |
+|---|---|---|
+| `drbd-emmc.yaml` | free space on the eMMC (default 64 GiB of a 128 GB module) | eMMC to spare; fastest |
+| `drbd-sd.yaml` | the whole microSD card | eMMC scarce: cards are cheap and replaceable, and with 2–3 copies a dead card only costs a resync |
+
+```sh
+talosctl -n <ip> patch mc --patch @talos/patches/drbd-emmc.yaml    # or drbd-sd.yaml
+talosctl -n <ip> get volumestatus                                 # r-drbd ready
+```
+
+Both create the same `/dev/disk/by-partlabel/r-drbd` and label the node
+`sbc-quartz.io/linstor=true` (plus `sbc-quartz.io/drbd-device=emmc|sd`), so nodes can mix
+and the LINSTOR side is identical. Leave a node out of stage 2 and it simply has no
+LINSTOR storage. It can still mount volumes over the network (diskless).
+
+For SD: use high-endurance cards of the same size on every node. They're slower than eMMC at
+small synchronous writes, and every write waits for the slowest copy, so keep databases off
+nodes backed by cards.
+
+**An M.2 SSD** instead or as well: leave the NVMe disk out of Talos volumes (no
+`UserVolumeConfig` on it) and give LINSTOR the whole disk (`/dev/nvme0n1`) as a second pool.
+
+### LINSTOR
+
+1. Every node that runs Piraeus needs `drbd.yaml` in its config: all storage workers, and
+   any node whose pods mount LINSTOR volumes. It loads DRBD and the LVM thin modules and
+   labels the node `sbc-quartz.io/drbd-module=true`; Piraeus runs only on those nodes.
+   (For the Pi 5, also add the `siderolabs/drbd` extension to its Image Factory schematic.)
+2. Install the operator:
+
+   ```sh
+   helm upgrade --install piraeus-op oci://ghcr.io/piraeusdatastore/piraeus-operator/piraeus \
+     -n piraeus-datastore --create-namespace
+   ```
+
+3. `kubectl apply -f talos/examples/piraeus-talos.yaml`: the `LinstorCluster`, plus the Talos
+   adjustments from the Piraeus Talos guide (no module loader or shutdown guard, no systemd
+   or kernel-header mounts, LVM metadata under `/var/etc/lvm` because `/etc` is read-only).
+4. `kubectl apply -f talos/examples/linstor-drbd.yaml`: pool `drbd` (LVM thin on `r-drbd`) on
+   every node labelled by stage 2, and two StorageClasses:
+
+   | StorageClass | copies | space per GiB | survives |
+   |---|---|---|---|
+   | `linstor-r2` | 2 + diskless tie-breaker | 2 GiB | one board down |
+   | `linstor-r3` | 3 | 3 GiB | two boards' disks lost |
+
+   With three workers at 64 GiB each that's about 96 GiB usable with r2 or 64 GiB with r3,
+   plenty for configs.
+   Use r2 by default and r3 for data you can't rebuild. Nodes added to stage 2 later join the
+   pool by themselves. Both classes pause I/O on a node that loses quorum rather than return
+   errors, which the Piraeus HA controller (on by default) uses to move the workload.
+
+### First node: check each step before doing the others
+
+These parts are configured but haven't been run on these boards yet.
+
+| after | check | expect |
+|---|---|---|
+| boot, before config | `talosctl get volumestatus --insecure -n <ip>` | EPHEMERAL not provisioned yet (waiting for config) |
+| first config | `talosctl -n <ip> get volumestatus` and `get discoveredvolumes` | EPHEMERAL ≈32 GiB, rest of the eMMC free |
+| first config | `talosctl -n <ip> read /sys/module/drbd/parameters/usermode_helper` | `disabled` |
+| first config | `talosctl -n <ip> read /proc/modules \| grep -E 'drbd\|dm_thin'` | `drbd`, `drbd_transport_tcp`, `dm_thin_pool` |
+| stage 2 patch | `talosctl -n <ip> get volumestatus` | `r-drbd` ready, without a reboot (reboot once if not) |
+| stage 2, SD | `talosctl -n <ip> get disks` | the card shows transport `mmc` and isn't the system disk |
+| Piraeus | `kubectl -n piraeus-datastore get pods -o wide` | a `linstor-satellite` per labelled node, Running |
+| pool | `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor storage-pool list` | `drbd` on the node, LVM_THIN, free space ≈ partition size |
+| volume | a test PVC on `linstor-r2` + a pod | Bound; `linstor resource list` shows 2 UpToDate + 1 TieBreaker |
+
+If holzkube won't accept a multi-document stored patch (`ephemeral-cap.yaml` is a separate
+`VolumeConfig` document), apply the first config with talosctl instead:
+`talosctl apply-config --insecure -n <ip> --file worker.yaml --config-patch @talos/patches/ephemeral-cap.yaml --config-patch @talos/patches/drbd.yaml`.
+
+### Backups
+
+Replicas aren't backups: a bad edit or a deletion reaches every copy at once. Keep configs in
+git, so the volume is a convenience copy. For data that isn't in git, take LINSTOR (CSI)
+snapshots and ship them to S3-compatible storage on the Pi 5 (e.g. MinIO on its SSD), off
+the workers that hold the replicas.
+
+**What goes where.** This pool is for small, slowly changing data: app configs, small
+databases, state that has to survive a node. Write volume is low, which also makes the SD
+option fine. Bulk and churny data goes to the Pi 5's NFS share instead. Container logs are
+always written to each node's `/var` (that's what the 32 GiB is for) and can't be pointed at
+NFS. To keep them off the nodes, ship them with a collector (Fluent Bit / Vector DaemonSet) to
+Loki on the Pi 5. Most config consumers need only one writer, so plain RWO volumes from
+`linstor-r3` are enough. Shared read-write (RWX) volumes are better served by the Pi 5's NFS
+than by an NFS server pod on top of DRBD. If you do build that, give the PV the Service's
+ClusterIP rather than its DNS name: the node mounts NFS itself and can't resolve
+`*.svc.cluster.local`.
+
+**Replacing a dead SD card:** fit the new card and reboot the node (Talos recreates
+`r-drbd`, the operator recreates the LVM pool from it). Then, in the controller
+(`kubectl -n piraeus-datastore exec -it deploy/linstor-controller -- bash`):
+`linstor resource list --faulty` and, for each resource on that node,
+`linstor resource delete <node> <res>`; LINSTOR places a new replica and resyncs it.
+Check `linstor resource list` until everything is UpToDate.
+
+## Upgrades
+
+See [provision-and-upgrade.md](provision-and-upgrade.md). In short: tuppr upgrades
+every node to `<its install image repository>:<version>`, which suits the board
+installers CI publishes. holzkube-manager provisions nodes, but don't use it to upgrade
+the Quartz/SOQuartz nodes, because its upgrades come from the Image Factory.
+
+## Fleet managers / GUIs (free options)
+
+| tool | cost / license | GUI | works with these boards? |
+|---|---|---|---|
+| **tuppr** | free, AGPL-3.0 | no (kubectl/GitOps) | yes; upgrades are driven by version, which our installer tags support |
+| **holzkube-manager** | free, AGPL-3.0, alpha (0.8) | yes, web + mobile | runs outside the cluster (management node). Use it for provisioning/config; its upgrades go through the Image Factory, so not for these boards |
+| **Omni (self-hosted)** | free for home lab / non-production under BSL; hosted Hobby is paid | yes | builds images and installers through Image Factory, which doesn't have this overlay, so its upgrades would fight these boards |
+| Kamaji | free | no | runs hosted control planes; not an OS fleet or upgrade manager |
+| Headlamp | free | yes | Kubernetes GUI only (workloads), no Talos upgrades |
+
+Suggested setup for a small, zero-cost cluster: tuppr for upgrades, CI for
+images, and optionally holzkube-manager on a spare board for a dashboard.

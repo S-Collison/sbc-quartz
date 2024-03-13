@@ -1,0 +1,35 @@
+# Stage 2, option B: LINSTOR partition on the whole microSD card; the eMMC is left to Talos.
+# Apply to a running node at any time:
+#   talosctl -n <ip> patch mc --patch @talos/patches/drbd-sd.yaml
+#
+# Use this instead of drbd-emmc.yaml when eMMC is scarce: the replicated-data
+# writes go to a cheap, replaceable card. Talos boots from the eMMC (the boot ROM
+# tries eMMC before SD), and the card must not hold a bootloader.
+#
+#   eMMC  (system disk)  Talos + EPHEMERAL (/var), whole disk as usual
+#   SD    r-drbd raw partition, whole card -> /dev/disk/by-partlabel/r-drbd
+#
+# Same partition name as drbd-emmc.yaml, so talos/examples/linstor-drbd.yaml works
+# unchanged. Use high-endurance cards (e.g. Samsung PRO Endurance, SanDisk
+# High/Max Endurance), 64-256 GB, the same size on every node.
+#
+# The card must be empty (no old image/partitions), or Talos finds no free space:
+#   talosctl -n <ip> wipe disk mmcblk1      # check the name with: talosctl -n <ip> get disks
+#
+# Card died: replace it and reboot; Talos recreates r-drbd on the new card and the
+# Piraeus operator rebuilds the pool. Then let LINSTOR resync (docs/cluster-ops.md).
+# Check:  talosctl -n <ip> get disks ; talosctl -n <ip> get volumestatus
+machine:
+  nodeLabels:
+    sbc-quartz.io/linstor: "true"
+    sbc-quartz.io/drbd-device: sd
+---
+apiVersion: v1alpha1
+kind: RawVolumeConfig
+name: drbd                       # partition label r-drbd
+provisioning:
+  diskSelector:
+    # the card: an MMC-attached disk that isn't the one Talos is installed on
+    match: disk.transport == "mmc" && !system_disk
+  minSize: 16GiB
+  grow: true

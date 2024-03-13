@@ -1,0 +1,11 @@
+# commit to be tagged for the new release
+commit = "HEAD"
+
+project_name = "sbc-quartz"
+github_repo = "S-Collison/sbc-quartz"
+match_deps = "^github.com/(S-Collison/[a-zA-Z0-9-]+)$"
+
+# previous = -
+# pre_release = true
+
+# [notes]

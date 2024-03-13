@@ -1,0 +1,47 @@
+# Piraeus Datastore on Talos: the cluster itself plus the Talos adjustments.
+# Apply after installing the operator (docs/cluster-ops.md), then linstor-drbd.yaml.
+#
+# Based on the Piraeus "How to Load DRBD on Talos Linux" guide
+# (https://piraeus.io/docs/v2/how-to/talos/): DRBD and the dm modules come from the
+# Talos drbd extension and talos/patches/drbd.yaml, so the module loader, the
+# shutdown guard and the systemd/kernel-header mounts are removed. /etc is read-only
+# on Talos, so LVM's config/metadata-backup directory lives under /var/etc/lvm.
+apiVersion: piraeus.io/v1
+kind: LinstorCluster
+metadata:
+  name: linstorcluster
+spec:
+  # only nodes with DRBD loaded (set by talos/patches/drbd.yaml); pods that mount
+  # LINSTOR volumes can only run on these nodes
+  nodeSelector:
+    sbc-quartz.io/drbd-module: "true"
+---
+apiVersion: piraeus.io/v1
+kind: LinstorSatelliteConfiguration
+metadata:
+  name: talos-loader-override
+spec:
+  podTemplate:
+    spec:
+      initContainers:
+        - name: drbd-shutdown-guard
+          $patch: delete
+        - name: drbd-module-loader
+          $patch: delete
+      volumes:
+        - name: run-systemd-system
+          $patch: delete
+        - name: run-drbd-shutdown-guard
+          $patch: delete
+        - name: systemd-bus-socket
+          $patch: delete
+        - name: lib-modules
+          $patch: delete
+        - name: usr-src
+          $patch: delete
+        # /etc/lvm -> writable host dir; LVM's default lvm.conf settings keep
+        # metadata backups/archives there (/var/etc/lvm/{backup,archive})
+        - name: etc-lvm
+          hostPath:
+            path: /var/etc/lvm
+            type: DirectoryOrCreate

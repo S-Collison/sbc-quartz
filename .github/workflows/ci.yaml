@@ -1,0 +1,40 @@
+# PR checks: fast syntax/lint only (seconds). Nothing is built, pushed or uploaded.
+# The overlay and images are built after merge by images.yaml (via track.yaml), which
+# reports back on the merged PR and opens a build-failure issue if something breaks.
+name: ci
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Seconds. Always runs: syntax of workflows, YAML, shell and Python.
+  lint:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: YAML parses
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = 0
+          for f in glob.glob(".github/workflows/*.yaml") + glob.glob("talos/**/*.yaml", recursive=True) + glob.glob("mgmt/*.yaml*") + glob.glob("profiles/**/*.yaml", recursive=True):
+              try:
+                  list(yaml.safe_load_all(open(f)))
+              except Exception as e:
+                  print(f"::error file={f}::{e}"); bad = 1
+          sys.exit(bad)
+          PY
+      - name: Shell and Python syntax
+        run: |
+          for f in hack/*.sh mgmt/*.sh mgmt/sbc-flash; do bash -n "$f"; done
+          python3 -m py_compile hack/zboot-extract.py hack/update-pins.py hack/media-modules.py mgmt/install-image-guard.py
+      - name: No *.tmpl files (bldr would load them)
+        run: |
+          if git ls-files '*.tmpl' | grep -q .; then git ls-files '*.tmpl'; echo "::error::rename *.tmpl files"; exit 1; fi

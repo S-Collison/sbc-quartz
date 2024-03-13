@@ -1,0 +1,79 @@
+# U-Boot for the Pine64 RK3566 family. Boards come from Pkgfile vars.boards;
+# each distinct defconfig is built once and installed as
+#   /rootfs/artifacts/arm64/u-boot/<overlay-name>/u-boot-rockchip.bin
+#   /rootfs/artifacts/arm64/u-boot/<overlay-name>/u-boot-rockchip-spi.bin  (boards with SPI flash, e.g. quartz64-a)
+#
+# References: https://u-boot.readthedocs.io/en/latest/board/rockchip/rockchip.html
+name: u-boot-quartz64
+variant: scratch
+shell: /bin/bash
+dependencies:
+  - stage: base
+  # TF-A treats rk3566/rk3568 as a single platform
+  - stage: arm-trusted-firmware-rk3568
+  - stage: rkbin-rk3566
+steps:
+  - sources:
+      - url: https://github.com/u-boot/u-boot/archive/refs/tags/v{{ .uboot_version }}.tar.gz
+        destination: u-boot.tar.gz
+        sha256: "{{ .uboot_sha256 }}"
+        sha512: "{{ .uboot_sha512 }}"
+    env:
+      SOURCE_DATE_EPOCH: {{ .BUILD_ARG_SOURCE_DATE_EPOCH }}
+    prepare:
+      - |
+        tar xf u-boot.tar.gz --strip-components=1
+    build:
+      - |
+        BL31=/libs/arm-trusted-firmware/rk3568/bl31.elf
+        TPL="$(ls /libs/rkbin/rk3566_ddr_1056MHz_v*.bin | sort -V | tail -n1)"
+        test -f "${BL31}" || { echo "missing BL31 ${BL31}"; exit 1; }
+        test -f "${TPL}"  || { echo "missing rk3566 DDR TPL blob"; exit 1; }
+        echo "BL31=${BL31} TPL=${TPL}"
+
+        for entry in {{ .boards }}; do
+          IFS=: read -r name defconfig dtb <<< "${entry}"
+          out=build/${defconfig}
+          if [ ! -s ${out}/u-boot-rockchip.bin ]; then
+            make O=${out} ${defconfig}
+            # Host tools: image signing needs the OpenSSL ENGINE API (gone from the toolchain's
+            # OpenSSL) and mkeficapsule needs gnutls; neither is used for Rockchip boot images.
+            ./scripts/config --file ${out}/.config --disable TOOLS_LIBCRYPTO --disable TOOLS_KWBIMAGE --disable TOOLS_MKEFICAPSULE
+            # Stable MAC address: misc_init_r() reads the CPU ID from the RK356x OTP, hashes it
+            # (SHA256) into ethaddr, and U-Boot writes it to the DT (ethernet0 alias) as
+            # local-mac-address, so Linux keeps the same MAC (and DHCP lease) on every boot.
+            # Without these the code is compiled out silently and the NIC gets a random MAC.
+            # ROCKCHIP_EFUSE must stay off: it takes precedence over OTP and RK356x has no eFuse.
+            ./scripts/config --file ${out}/.config \
+              --enable MISC --enable MISC_INIT_R --enable ROCKCHIP_OTP --disable ROCKCHIP_EFUSE \
+              --enable HASH --enable SHA256 \
+              --enable NET --enable CMD_NET --enable CMD_DHCP --enable DWC_ETH_QOS --enable DWC_ETH_QOS_ROCKCHIP
+            make O=${out} olddefconfig
+            # fail the build if Kconfig dropped any of them (renamed symbol, unmet dependency)
+            for opt in MISC MISC_INIT_R ROCKCHIP_OTP HASH SHA256 NET CMD_NET DWC_ETH_QOS_ROCKCHIP; do
+              grep -qx "CONFIG_${opt}=y" ${out}/.config || { echo "${defconfig}: CONFIG_${opt} is not enabled"; exit 1; }
+            done
+            ! grep -qx "CONFIG_ROCKCHIP_EFUSE=y" ${out}/.config || { echo "${defconfig}: ROCKCHIP_EFUSE must be off"; exit 1; }
+            make O=${out} -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" BL31="${BL31}" ROCKCHIP_TPL="${TPL}"
+            # minimal, diffable form of the final config (only what differs from Kconfig defaults)
+            make O=${out} savedefconfig
+          fi
+          test -s ${out}/u-boot-rockchip.bin
+        done
+    install:
+      - |
+        for entry in {{ .boards }}; do
+          IFS=: read -r name defconfig dtb <<< "${entry}"
+          mkdir -p /rootfs/artifacts/arm64/u-boot/${name}
+          cp build/${defconfig}/u-boot-rockchip.bin /rootfs/artifacts/arm64/u-boot/${name}/
+          # the resolved config, so CI (hack/uboot-report.sh) and anyone with the overlay
+          # image can see exactly what was built without a serial console
+          cp build/${defconfig}/.config /rootfs/artifacts/arm64/u-boot/${name}/u-boot.config
+          cp build/${defconfig}/defconfig /rootfs/artifacts/arm64/u-boot/${name}/u-boot.defconfig
+          if [ -s build/${defconfig}/u-boot-rockchip-spi.bin ]; then
+            cp build/${defconfig}/u-boot-rockchip-spi.bin /rootfs/artifacts/arm64/u-boot/${name}/
+          fi
+        done
+finalize:
+  - from: /rootfs
+    to: /rootfs
