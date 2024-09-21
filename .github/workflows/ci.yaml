@@ -60,7 +60,7 @@ jobs:
             "Total memory: ${MEMORY_GB} GB"
           )
 
-          lsof -i
+          lsof -i:1234
 
           for OUTPUT in "${OUTPUTS[@]}";do
             echo "${OUTPUT}"
