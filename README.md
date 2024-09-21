@@ -1,4 +1,4 @@
-# sbc-template
+# sbc-quartz
 
 This is a template repository to generate a new project for the SBC.
 
