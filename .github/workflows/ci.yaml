@@ -64,6 +64,8 @@ jobs:
 
           lsof -Pi
 
+          docker ps
+
           for OUTPUT in "${OUTPUTS[@]}";do
             echo "${OUTPUT}"
           done
