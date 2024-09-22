@@ -9,7 +9,7 @@ dependencies:
   - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/kernel:{{ .BUILD_ARG_PKGS }}"
     platform: linux/arm64
     from: /dtb/rockchip/rk3566-soquartz-blade.dtb
-    to: /rootfs/artifacts/arm64/dtb/rk3566-soquartz-blade.dtb
+    to: /rootfs/artifacts/arm64/dtb/rockchip/rk3566-soquartz-blade.dtb
 finalize:
   - from: /rootfs
     to: /
