@@ -34,13 +34,8 @@ func (i *soquartzBlade) GetOptions(extra soquartzBladeExtraOptions) (overlay.Opt
 	return overlay.Options{
 		Name: board,
 		KernelArgs: []string{
-			"ignore_loglevel",
-			"ro",
-			"rootwait",
-			"earlycon",
 			"console=tty0",
 			"ttyS2,1500000n8",
-			"fw_devlink=off",
 			"sysctl.kernel.kexec_load_disabled=1",
 			"talos.dashboard.disabled=1",
 		},
