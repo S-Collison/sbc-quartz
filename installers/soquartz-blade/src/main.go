@@ -35,7 +35,8 @@ func (i *soquartzBlade) GetOptions(extra soquartzBladeExtraOptions) (overlay.Opt
 		Name: board,
 		KernelArgs: []string{
 			"console=tty0",
-			"ttyS2,115200n8",
+			"ttyS2,1500000n8",
+			"fw_devlink=off",
 			"sysctl.kernel.kexec_load_disabled=1",
 			"talos.dashboard.disabled=1",
 		},
