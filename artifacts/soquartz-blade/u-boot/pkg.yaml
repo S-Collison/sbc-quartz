@@ -27,12 +27,11 @@ steps:
 
         tar xf u-boot.tar.bz2 --strip-components=1
 
-        patch -p1 < /pkg/patches/uboot-byteorder.patch
+        #patch -p1 < /pkg/patches/uboot-byteorder.patch
       - |
         make soquartz-blade-rk3566_defconfig
     build:
       - |
-        ls -l /libs
         make -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" BL31=/libs/arm-trusted-firmware/rk3568/bl31.elf ROCKCHIP_TPL="$(ls /libs/rkbin/rk3566_ddr_1056MHz_v*.bin | sort | tail -n1)"
     install:
       - |
