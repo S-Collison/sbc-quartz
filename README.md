@@ -56,8 +56,15 @@ management box (holzkube, registry caches, install-image guard) is in
 
 ## CI releases
 
+Hands-off. `track.yaml` checks upstream daily (latest Talos release and its kernel
+`PKGS`, latest siderolabs/sbc-rockchip U-Boot/TF-A/rkbin/toolchain/Go deps), writes
+them to `talos.env` and the build files, and test-builds the overlay. If that passes it
+commits to `main` and starts `images.yaml`; if it fails it opens a PR labelled
+`auto-update`. A failing unattended images or media-containers run opens an issue
+labelled `build-failure`. `talos.env` is the source of truth for what gets built.
+
 `.github/workflows/images.yaml` runs on merges to `main` (image-related files), `v*`
-tags, weekly, or by hand. It builds stock and media (Hantro) images and upgrade
+tags, a tracker update, or by hand. It builds stock and media (Hantro) images and upgrade
 installers for quartz64-a, soquartz-blade and soquartz-model-a, and publishes them as
 a GitHub Release. Media failures don't block the stock release. Details are in
 [docs/cluster-ops.md](docs/cluster-ops.md).
@@ -103,4 +110,4 @@ CI publishes these installers on every release.
 | toolchain | siderolabs/tools v1.15.0-alpha.0-16-g54f72f9, bldr v0.6.5 |
 
 These pins match siderolabs/sbc-rockchip v0.3.0, which builds RK3566/RK3568
-boards with them. CI moves `PKGS` to whatever the latest Talos release uses.
+boards with them. `track.yaml` moves them (and `PKGS`) forward automatically.

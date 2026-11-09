@@ -18,6 +18,7 @@ on:
 permissions:
   contents: read
   packages: write
+  issues: write
 jobs:
   build:
     runs-on: ubuntu-24.04-arm
@@ -47,3 +48,19 @@ jobs:
             --tag ghcr.io/${owner}/${{ matrix.name }}:latest \
             --tag ghcr.io/${owner}/${{ matrix.name }}:$(date -u +%Y%m%d) \
             --push
+
+  report:
+    needs: build
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: |
+          set -euo pipefail
+          body="media-containers failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} (${GITHUB_EVENT_NAME}, ${GITHUB_SHA::7}). Close once a run is green."
+          gh label create build-failure --color D93F0B --description "Unattended build failed" --force
+          n="$(gh issue list --label build-failure --state open --search 'media-containers in:title' --json number --jq '.[0].number // empty')"
+          if [ -n "$n" ]; then gh issue comment "$n" --body "${body}"
+          else gh issue create --label build-failure --title "media-containers: build failing" --body "${body}"; fi

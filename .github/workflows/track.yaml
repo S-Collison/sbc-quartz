@@ -1,0 +1,121 @@
+# Daily, hands-off dependency tracker.
+#
+#   upstream                                   -> this repo
+#   latest Talos release + its PKGS            -> talos.env, Makefile, .kres.yaml, example patches
+#   latest siderolabs/sbc-rockchip release:
+#     U-Boot, TF-A, rkbin (+ sha256/sha512)    -> Pkgfile
+#     bldr, TOOLS                              -> Pkgfile syntax line, Makefile, .kres.yaml
+#     installer go.mod/go.sum (machinery, Go)  -> installers/quartz64/src
+#
+# Following sbc-rockchip means only taking versions Sidero already builds Rockchip boards with.
+# On a change the overlay is built (arm64, nothing pushed):
+#   - build passes -> commit to main, start the images workflow (publishes the release)
+#   - build fails  -> push branch auto/update-pins and open/update a PR labelled auto-update
+#
+# One-time repo settings: Settings > Actions > General > Workflow permissions:
+# "Read and write" + "Allow GitHub Actions to create and approve pull requests".
+name: track
+on:
+  schedule:
+    - cron: "23 11 * * *"     # daily 11:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+  issues: write
+
+concurrency:
+  group: track
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: auto/update-pins
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+
+      - name: Fetch upstream pins and apply them
+        id: up
+        run: |
+          set -euo pipefail
+          talos="$(gh api repos/siderolabs/talos/releases/latest --jq .tag_name)"
+          pkgs="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/talos/${talos}/Makefile" \
+                  | sed -nE 's/^PKGS \?= *(.*)$/\1/p' | head -n1)"
+          [ -n "${pkgs}" ] || { echo "::error::no PKGS in Talos ${talos} Makefile"; exit 1; }
+
+          rk="$(gh api repos/siderolabs/sbc-rockchip/releases/latest --jq .tag_name)"
+          base="https://raw.githubusercontent.com/siderolabs/sbc-rockchip/${rk}"
+          mkdir -p /tmp/up
+          curl -fsSL "${base}/Pkgfile" -o /tmp/up/Pkgfile
+          curl -fsSL "${base}/Makefile" -o /tmp/up/Makefile
+          go_args=""
+          if curl -fsSL "${base}/installers/radxa-zero-3e/src/go.mod" -o /tmp/up/go.mod \
+             && curl -fsSL "${base}/installers/radxa-zero-3e/src/go.sum" -o /tmp/up/go.sum; then
+            go_args="--rockchip-gomod /tmp/up/go.mod --rockchip-gosum /tmp/up/go.sum"
+          else
+            echo "::warning::sbc-rockchip ${rk}: no radxa-zero-3e go.mod; Go deps not updated"
+          fi
+
+          python3 hack/update-pins.py --talos "${talos}" --pkgs "${pkgs}" \
+            --rockchip-pkgfile /tmp/up/Pkgfile --rockchip-makefile /tmp/up/Makefile ${go_args}
+
+          {
+            echo "talos=${talos}"; echo "rockchip=${rk}"
+            if git diff --quiet; then echo "changed=false"; else echo "changed=true"; fi
+          } | tee -a "$GITHUB_OUTPUT"
+          git diff --stat | tee /tmp/diffstat
+
+      - uses: docker/setup-buildx-action@v4
+        if: steps.up.outputs.changed == 'true'
+
+      - name: Validate (overlay build, arm64, not pushed)
+        id: build
+        if: steps.up.outputs.changed == 'true'
+        continue-on-error: true
+        run: make target-sbc-quartz PLATFORM=linux/arm64
+
+      - name: Build passed -> commit to main, publish images
+        if: steps.up.outputs.changed == 'true' && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: track upstream (Talos ${{ steps.up.outputs.talos }}, sbc-rockchip ${{ steps.up.outputs.rockchip }})" \
+            -m "$(cat /tmp/diffstat)"
+          git pull --rebase origin main
+          git push origin HEAD:main
+          # pushes made with GITHUB_TOKEN don't trigger push workflows; dispatch explicitly
+          gh workflow run images.yaml --ref main
+          for n in $(gh pr list --label auto-update --state open --json number --jq '.[].number'); do
+            gh pr close "$n" --delete-branch --comment "Superseded: pins applied to main in $(git rev-parse --short HEAD)."
+          done
+
+      - name: Build failed -> open/update PR
+        if: steps.up.outputs.changed == 'true' && steps.build.outcome != 'success'
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${BRANCH}"
+          git commit -am "chore: track upstream (Talos ${{ steps.up.outputs.talos }}, sbc-rockchip ${{ steps.up.outputs.rockchip }})"
+          git push -f origin "${BRANCH}"
+          body="$(printf 'The automatic pin update **failed the overlay build**: %s\n\nUpstream: Talos `%s`, sbc-rockchip `%s`.\n\n```\n%s\n```\n\nFix on this branch and merge; the tracker closes this PR once an update builds.' \
+                  "${run_url}" "${{ steps.up.outputs.talos }}" "${{ steps.up.outputs.rockchip }}" "$(cat /tmp/diffstat)")"
+          gh label create auto-update --color FBCA04 --description "Automatic dependency update" --force
+          pr="$(gh pr list --head "${BRANCH}" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "${pr}" ]; then
+            gh pr comment "${pr}" --body "${body}"
+          else
+            gh pr create --base main --head "${BRANCH}" --label auto-update \
+              --title "Upstream update failing: Talos ${{ steps.up.outputs.talos }} / sbc-rockchip ${{ steps.up.outputs.rockchip }}" \
+              --body "${body}"
+          fi
+          exit 1

@@ -4,12 +4,15 @@
 #   media  - same mainline kernel + Hantro/RGA (media-kernel.yaml), drbd rebuilt for it
 # and publishes a GitHub Release. A media failure never blocks the stock images.
 #
-# Triggers: push to main (image-related paths) | tag v* | weekly | manual.
+# Triggers: push to main (image-related paths) | tag v* | manual. New upstream
+# versions arrive via track.yaml, which edits talos.env and dispatches this.
+# talos.env is the source of truth for the Talos version and its kernel pkgs.
 name: images
 on:
   push:
     branches: [main]
     paths:
+      - talos.env
       - Pkgfile
       - artifacts/**
       - installers/**
@@ -21,12 +24,10 @@ on:
       - .github/workflows/images.yaml
       - .github/workflows/media-kernel.yaml
     tags: ["v*"]
-  schedule:
-    - cron: "17 9 * * 1"   # Mondays 09:17 UTC
   workflow_dispatch:
     inputs:
       talos_version:
-        description: "Talos version (e.g. v1.14.5). Empty = latest release"
+        description: "Talos version override (e.g. v1.14.4). Empty = talos.env"
         required: false
       media:
         description: "Also build the media (Hantro) flavor. First run builds the kernel: several hours"
@@ -44,6 +45,7 @@ on:
 permissions:
   contents: write
   packages: write
+  issues: write
   id-token: write      # keyless cosign signatures (GitHub OIDC identity)
 
 concurrency:
@@ -77,14 +79,19 @@ jobs:
           NETBOOT: ${{ github.event_name == 'workflow_dispatch' && inputs.netboot }}
         run: |
           set -euo pipefail
-          talos="${INPUT:-$(gh api repos/siderolabs/talos/releases/latest --jq .tag_name)}"
-          # The Talos Makefile pins the pkgs (kernel) build for that release.
-          pkgs="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/talos/${talos}/Makefile" \
-                  | sed -nE 's/^PKGS \?= *(.*)$/\1/p' | head -n1)"
+          . ./talos.env
+          talos="${INPUT:-${TALOS_VERSION}}"
+          if [ "${talos}" = "${TALOS_VERSION}" ]; then
+            pkgs="${PKGS}"
+          else
+            # older release requested by hand: use the kernel pkgs that release pinned
+            pkgs="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/talos/${talos}/Makefile" \
+                    | sed -nE 's/^PKGS \?= *(.*)$/\1/p' | head -n1)"
+          fi
           [ -n "${pkgs}" ] || { echo "::error::could not find PKGS for ${talos}"; exit 1; }
           src="$(git describe --tag --always --match 'v[0-9]*')"
           skip=false
-          if [ "${GITHUB_EVENT_NAME}" = schedule ] || { [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${FORCE}" != true ]; }; then
+          if [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${FORCE}" != true ]; then
             gh release view "talos-${talos}-${src}" >/dev/null 2>&1 && skip=true
           fi
           {
@@ -282,3 +289,27 @@ jobs:
           name: Talos ${{ needs.resolve.outputs.talos }} (${{ needs.resolve.outputs.release_tag }})
           body_path: notes.md
           files: dist/*
+
+  # Unattended runs (push/dispatch from track.yaml) report failures as an issue
+  # instead of relying on someone reading the Actions tab. The media flavor is
+  # optional, so its failure is reported too, without failing the release.
+  report:
+    needs: [resolve, overlay, media-kernel, images, images-media, release]
+    if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
+    runs-on: ubuntu-24.04-arm
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          title="images: build failing (Talos ${{ needs.resolve.outputs.talos }})"
+          body="$(printf 'Run: %s (%s on %s)\n\n| job | result |\n|---|---|\n| resolve | %s |\n| overlay | %s |\n| media-kernel | %s |\n| images (stock) | %s |\n| images-media | %s |\n| release | %s |\n\nClose this once a run is green.' \
+            "${run_url}" "${GITHUB_EVENT_NAME}" "${GITHUB_SHA::7}" \
+            "${{ needs.resolve.result }}" "${{ needs.overlay.result }}" "${{ needs.media-kernel.result }}" \
+            "${{ needs.images.result }}" "${{ needs.images-media.result }}" "${{ needs.release.result }}")"
+          gh label create build-failure --color D93F0B --description "Unattended build failed" --force
+          n="$(gh issue list --label build-failure --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$n" ]; then gh issue comment "$n" --body "${body}"
+          else gh issue create --label build-failure --title "${title}" --body "${body}"; fi

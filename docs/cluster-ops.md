@@ -31,10 +31,31 @@ images under `ghcr.io/s-collison/talos-media/*`). Media nodes also get
 
 ## What CI publishes
 
-`.github/workflows/images.yaml` runs on a tag, weekly, or by hand. It:
+### Tracking upstream (`track.yaml`, daily)
 
-1. finds the latest Talos release (or the version you give it) and the kernel build
-   it uses (`PKGS` in that release's Makefile);
+| reads | writes |
+|---|---|
+| latest siderolabs/talos release, its Makefile `PKGS` | `talos.env`, `Makefile`, `.kres.yaml`, `talos/patches/install-*.yaml`, `talos/tuppr/upgrades.yaml` |
+| latest siderolabs/sbc-rockchip release: Pkgfile, Makefile, installer go.mod/go.sum | `Pkgfile` (U-Boot, TF-A, rkbin + checksums, bldr), `TOOLS`, `installers/quartz64/src/go.{mod,sum}`, `go.work` |
+
+The edits are made by `hack/update-pins.py` (run it locally with the same arguments to
+reproduce). Then `make target-sbc-quartz PLATFORM=linux/arm64` must pass:
+
+- pass → commit to `main`, dispatch `images.yaml`, close any open `auto-update` PR;
+- fail → force-push `auto/update-pins`, open/comment the `auto-update` PR with the run link.
+  Fix on that branch and merge. PR checks don't run on bot-pushed branches; push any commit
+  yourself (or close/reopen) to start them.
+
+To hold an older Talos, edit `talos.env` by hand and disable the track workflow
+(Actions → track → ⋯ → Disable), otherwise the next run moves it forward again.
+
+### Building (`images.yaml`)
+
+Runs on a tag, a tracker update, a merge touching image files, or by hand. Failures on
+non-PR runs open/comment an issue labelled `build-failure`. It:
+
+1. reads the Talos version and kernel build (`PKGS`) from `talos.env` (a manual run
+   may override the version);
 2. builds the media kernel stack if it's missing (`media-kernel.yaml`), and the overlay
    `ghcr.io/s-collison/sbc-quartz:<repo-tag>-<talos>`;
 3. for each flavor × board (`quartz64-a`, `soquartz-blade`, `soquartz-model-a`):

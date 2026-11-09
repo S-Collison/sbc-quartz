@@ -16,7 +16,11 @@ Express 7 (gateway, DHCP/DNS) ── PoE switch, VLAN 20 "cluster" 10.20.0.0/24
 
 1. Push the branch, open the PR and merge it:
    `git push -u origin fix/quartz64-arm64-boot && gh pr create --fill --body-file _out/PR_BODY.md`
-2. Merging to `main` starts **images** automatically (it also runs on `v*` tags, Mondays, and
+2. One-time repo setting: Settings → Actions → General → Workflow permissions → **Read and
+   write** and **Allow GitHub Actions to create and approve pull requests** (the tracker needs
+   both). After that, new Talos/sbc-rockchip releases are picked up daily by **track** with no
+   action from you; you only hear about it through an `auto-update` PR or a `build-failure` issue.
+   Merging to `main` starts **images** automatically (also on `v*` tags and
    GitHub → Actions → **images** → *Run workflow*). It builds the **stock** and **media** (Hantro)
    images for each board. The first media run builds the kernel and takes several hours; stock
    images don't wait for it.

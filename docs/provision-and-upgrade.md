@@ -81,7 +81,7 @@ hook rewrites U-Boot and the DTB, so **U-Boot updates ride along with Talos upgr
 
 ## Order of operations for a new Talos release
 
-1. CI (`images.yaml`, weekly or manual) publishes `talos-installer-<board>:<new>` and the release images.
+1. CI (`track.yaml` → `images.yaml`, automatic) publishes `talos-installer-<board>:<new>` and the release images.
 2. Bump `TalosUpgrade.spec.talos.version`. tuppr rolls the cluster.
 
 ## Later: holzkube for everything (self-hosted Image Factory)
