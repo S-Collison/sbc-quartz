@@ -1,24 +1,33 @@
 # Running the cluster: install, storage, upgrades
 
-## Planned topology
+## Planned topology (routed at the switch)
 
 ```
-UniFi Express 7 (gateway, Wi-Fi mesh) ── 2.5G LAN ── PoE+ switch (cluster VLAN)
-                                                     ├─ Raspberry Pi 5 16GB  control plane (Talos rpi5 overlay), SSD, USB disk
-                                                     ├─ Quartz64 A           worker (eMMC boot, NVMe -> LINSTOR)
-                                                     ├─ SOQuartz + Blade     worker (NVMe -> LINSTOR)
-                                                     └─ SOQuartz + Model-A   worker
+ Internet ── UniFi Express 7 ── LAN 192.168.1.0/24 (Wi-Fi mesh, onsite hardware)
+                  │  uplink port: access port in the LAN only (cluster VLAN NOT trunked to the Express/mesh)
+                  │
+   USW-Enterprise-8-PoE (Layer 3)   LAN IP 192.168.1.2
+        SVI 10.20.0.1/24  = cluster VLAN 20 (lives only on this switch)
+        ├─ Raspberry Pi 5 16GB   10.20.0.10  control plane / API (rpi5 overlay)
+        ├─ Quartz64 A            10.20.0.21  worker
+        ├─ SOQuartz + Blade      10.20.0.22  worker
+        ├─ SOQuartz + Model-A    10.20.0.23  worker
+        └─ (optional) cameras / onsite gear in their own VLAN, also routed here
+   Service VIPs (MetalLB/Cilium L2): 10.20.0.200-250
 ```
 
-- Put the cluster on its own VLAN. East-west traffic then stays on the switch,
-  and only ingress and egress cross the Express 7.
-- Load balancing, DNS and TLS run in-cluster: Cilium (L2 announcements) or
-  MetalLB for service IPs, Gateway API / ingress, external-dns, cert-manager,
-  and an OIDC provider (e.g. Pocket ID / Authelia / Authentik).
-- For outside access, forward 443 on the Express 7 to the ingress VIP, or use
-  Cloudflare Tunnel (no open ports).
-- Talos has no in-kernel NFS server (`nfsd`). For NFS from the Pi, run a
-  user-space server (NFS-Ganesha) in a pod, pinned to the Pi.
+- In UniFi Network, create the cluster network with the **Enterprise 8 as its router**
+  (a Layer 3 network on the switch). The switch does inter-VLAN routing at line rate.
+  UniFi gives the Express 7 the return route, and NAT for internet access.
+- Cluster broadcast and multicast (ARP, L2 VIP announcements, mDNS) stay on the
+  switch. Only routed unicast to and from the LAN, and internet traffic, crosses the uplink.
+- Onsite hardware on the LAN reaches the API (`10.20.0.10:6443`, `:50000`) and
+  service VIPs through the switch. Restrict it with switch ACLs / UniFi firewall zones if needed.
+- Routing doesn't carry **mDNS/SSDP discovery** (HomeKit, Chromecast, some cameras).
+  Turn on UniFi's mDNS reflector for the two networks, or put that gear on the cluster VLAN.
+- Outside access: on the Express 7, forward 443 to the ingress VIP (10.20.0.200), or use
+  Cloudflare Tunnel (no open ports). TLS via cert-manager; OIDC via Pocket ID / Authelia / Authentik.
+- Talos has no in-kernel NFS server (`nfsd`). For NFS from the Pi, run NFS-Ganesha in a pod pinned to the Pi.
 
 ## What CI publishes
 
