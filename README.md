@@ -40,7 +40,9 @@ Output: `_out/talos-<version>-<board>.raw.xz`.
 
 Flash a release image, boot into maintenance mode, assign configs with
 holzkube-manager (or talosctl), and upgrade with tuppr:
-[docs/provision-and-upgrade.md](docs/provision-and-upgrade.md).
+[docs/provision-and-upgrade.md](docs/provision-and-upgrade.md). The Pi Zero
+management box (holzkube, registry caches, install-image guard) is in
+[docs/zero.md](docs/zero.md).
 
 ## Flavors and netboot (optional)
 

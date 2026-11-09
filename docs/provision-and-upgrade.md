@@ -24,32 +24,37 @@ would pick systemd-boot under U-Boot's UEFI, while these images use GRUB.
 ## 2. Assign configs with holzkube-manager
 
 holzkube-manager provisions any maintenance-mode node: it checks the certificate
-fingerprint, then writes the config. For each Quartz/SOQuartz node, include these
-patches. They're in `talos/patches/`; paste them in holzkube's config patch / diff view,
-or keep them on its machine class:
+fingerprint, then writes the config. Add these patches from `talos/patches/` (stored
+patches / machine class in holzkube):
 
-- `install-<board>.yaml`: **required**. Sets `machine.install.image` to the board's
-  installer `ghcr.io/s-collison/talos-installer-<board>:<talos>`. Talos 1.14 fills an unset
-  install image with the Image Factory's empty schematic, and upgrading to that would
-  drop this overlay (U-Boot and DTB updates).
-- `drbd.yaml`: loads DRBD for Piraeus/LINSTOR on the M.2 SSD.
-- `tuppr.yaml`: lets tuppr call the Talos API from `system-upgrade`.
-- Set `machine.install.disk` to the disk you flashed (`/dev/mmcblk0` or `/dev/mmcblk1`; check
-  with `talosctl get disks --insecure -n <ip>`).
+- `drbd.yaml`: DRBD for Piraeus/LINSTOR.
+- `tuppr.yaml`: Talos API access for tuppr.
+- `registry-mirror.yaml`: pull through the Pi Zero's caches.
+- `rpi5-controlplane.yaml` (Pi 5 only, first apply): etcd/EPHEMERAL on the SSD, media volume.
+- Install disk: choose the disk you flashed (`talosctl get disks --insecure -n <ip>`).
+
+**The installer image gets fixed up afterwards.** holzkube-manager 0.8 sets
+`.machine.install.image` itself (stock or Image Factory installer) and adds it after your
+patches. The Pi Zero's **install-image-guard** ([zero.md](zero.md)) then pins each
+Quartz/SOQuartz node to `ghcr.io/s-collison/talos-installer-<board>:<talos>` within a few
+minutes. For a flashed node nothing is reinstalled, so the stock value is never used.
+Without the Zero, run once per node:
+
+```sh
+talosctl -n <ip> patch mc --mode=no-reboot \
+  -p '{"machine":{"install":{"image":"ghcr.io/s-collison/talos-installer-<board>:v1.14.5"}}}'
+```
 
 Control plane: the **Pi 5** (16 GB) is the API server and also runs Plex (direct
 play), Blu-ray ripping and NFS. Apply the controlplane config with
-`talos/patches/rpi5-controlplane.yaml` **on first apply**: it moves EPHEMERAL (etcd,
-images, logs) off the microSD onto the SSD, makes the rest of the SSD a `media` user
-volume (`/var/mnt/media`), allows workloads on the control plane, and reserves
-CPU/RAM for etcd and the API server. Then bootstrap etcd there
-(`talosctl bootstrap -n 10.20.0.10`). Every other node gets worker configs. The Pi
-Zero stays outside the cluster (holzkube, etcd backup copies).
+`rpi5-controlplane.yaml` **on first apply**, then bootstrap etcd there
+(`talosctl bootstrap -n 10.20.0.10`). Every other node gets worker configs.
 
 ## 3. Upgrades: tuppr (not holzkube)
 
 - **holzkube-manager's upgrades** always resolve the installer through an Image
-  Factory (`IMAGE_FACTORY_URL`, from the node's schematic). The Factory only offers
+  Factory (`IMAGE_FACTORY_URL`, from the node's schematic), and the upgrade call sends
+  that image, not the one in the node's config. The Factory only offers
   Sidero's signed overlays, so for these boards it would install an image without our
   U-Boot/DTB. **Don't upgrade Quartz/SOQuartz nodes from holzkube.** It's fine for the Pi 5,
   which is a Factory `rpi5` image.
@@ -78,3 +83,16 @@ hook rewrites U-Boot and the DTB, so **U-Boot updates ride along with Talos upgr
 
 1. CI (`images.yaml`, weekly or manual) publishes `talos-installer-<board>:<new>` and the release images.
 2. Bump `TalosUpgrade.spec.talos.version`. tuppr rolls the cluster.
+
+## Later: holzkube for everything (self-hosted Image Factory)
+
+CI already publishes what a self-hosted factory needs on GHCR:
+- **Overlay:** `ghcr.io/s-collison/sbc-quartz:<tag>`, signed with cosign keyless (GitHub OIDC).
+- **Overlay catalog:** `ghcr.io/s-collison/overlays:<talos>`, the official catalog plus these
+  boards, also signed. It's what `artifacts.core.components.overlayManifest` points at.
+
+Running `ghcr.io/siderolabs/image-factory` on the Pi 5 (see Sidero's "Running Image
+Factory On-Prem"), with that catalog and `containerSignature` set to trust Sidero's
+signers plus this repo's workflow identity, and pointing holzkube's
+`IMAGE_FACTORY_URL` at it, would let holzkube provision (including PXE) and upgrade
+these boards with factory schematics. Then the guard isn't needed. Not tested yet.

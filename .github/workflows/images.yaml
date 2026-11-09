@@ -31,6 +31,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write      # keyless cosign signatures (GitHub OIDC identity)
 
 concurrency:
   group: images-${{ github.ref }}
@@ -110,6 +111,50 @@ jobs:
             PKGS="${{ needs.resolve.outputs.pkgs }}" \
             TARGET_ARGS="--tag=${REGISTRY}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }} --push=true"
 
+  # Groundwork for a self-hosted Image Factory (artifacts.core.components.overlayManifest):
+  # the official overlay catalog for this Talos version plus our boards, as
+  # ghcr.io/<owner>/overlays:<talos>, with the overlay and catalog signed keylessly.
+  # Never blocks image releases.
+  catalog:
+    needs: [resolve, overlay]
+    runs-on: ubuntu-24.04-arm
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: "${{ env.REGISTRY }}", username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: sigstore/cosign-installer@v3
+      - uses: imjasonh/setup-crane@v0.4
+      - name: Sign overlay, publish catalog
+        env:
+          OWNER: ${{ needs.resolve.outputs.owner }}
+          TALOS: ${{ needs.resolve.outputs.talos }}
+          OVERLAY_TAG: ${{ needs.resolve.outputs.overlay_tag }}
+        run: |
+          set -euo pipefail
+          overlay="${REGISTRY}/${OWNER}/sbc-quartz"
+          digest="$(crane digest "${overlay}:${OVERLAY_TAG}")"
+          cosign sign --yes "${overlay}@${digest}"
+          mkdir -p cat && cd cat
+          crane export "ghcr.io/siderolabs/overlays:${TALOS}" - | tar x overlays.yaml 2>/dev/null || echo "overlays: []" > overlays.yaml
+          python3 -m pip install --quiet --break-system-packages pyyaml 2>/dev/null || true
+          OVERLAY="${overlay}:${OVERLAY_TAG}" DIGEST="${digest}" python3 - <<'PY2'
+          import os, re, yaml
+          cat = yaml.safe_load(open("overlays.yaml")) or {}
+          cat.setdefault("overlays", [])
+          boards = re.findall(r"^    ([a-z0-9-]+):", open("../Pkgfile").read(), re.M)
+          names = {o["name"] for o in cat["overlays"]}
+          for b in boards:
+              if b not in names:
+                  cat["overlays"].append({"name": b, "image": os.environ["OVERLAY"], "digest": os.environ["DIGEST"]})
+          yaml.safe_dump(cat, open("overlays.yaml", "w"), sort_keys=False)
+          print(open("overlays.yaml").read())
+          PY2
+          printf 'FROM scratch\nCOPY overlays.yaml /overlays.yaml\n' > Dockerfile
+          docker buildx build . --platform linux/arm64,linux/amd64 --tag "${REGISTRY}/${OWNER}/overlays:${TALOS}" --push
+          cosign sign --yes "${REGISTRY}/${OWNER}/overlays@$(crane digest "${REGISTRY}/${OWNER}/overlays:${TALOS}")"
+
   images:
     needs: [resolve, overlay, media-kernel]
     # run even when media-kernel was skipped (stock-only builds)
@@ -144,6 +189,14 @@ jobs:
           # optional netboot assets, once per flavor (kernel/initramfs are board-independent)
           if [ "${{ inputs.netboot }}" = true ] && [ "${{ matrix.board }}" = quartz64-a ]; then export NETBOOT=1; fi
           hack/build-image.sh "${{ matrix.board }}"
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign installer (keyless)
+        continue-on-error: true
+        run: |
+          suffix=""; [ "${{ matrix.flavor }}" = media ] && suffix="-media"
+          ref="${REGISTRY}/${{ needs.resolve.outputs.owner }}/talos-installer-${{ matrix.board }}${suffix}:${{ needs.resolve.outputs.talos }}"
+          digest="$(docker buildx imagetools inspect "${ref}" --format '{{json .Manifest}}' | jq -r .digest)"
+          cosign sign --yes "${ref%:*}@${digest}"
       - name: Checksums
         run: cd _out && for f in *.raw.xz *.tar.gz; do [ -e "$f" ] && sha256sum "$f" > "$f.sha256"; done; ls -la
       - uses: actions/upload-artifact@v4
