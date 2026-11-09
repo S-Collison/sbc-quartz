@@ -5,3 +5,7 @@
 _out
 go.work.sum
 .DS_Store
+u-boot-*.tar.bz2
+s/
+p/
+/profiles/soquartz-blade.yaml

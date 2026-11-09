@@ -1,4 +1,4 @@
-name: soquartz-blade
+name: quartz64-installers
 variant: scratch
 shell: /toolchain/bin/bash
 dependencies:
@@ -14,12 +14,14 @@ steps:
         export PATH=${PATH}:${TOOLCHAIN}/go/bin
 
         cd /pkg/src
-        CGO_ENABLED=0 go build -o ./soquartz-blade .
+        # One installer binary per overlay name; the board is baked in at link time.
+        for board in quartz64-a quartz64-b soquartz-blade soquartz-model-a soquartz-cm4; do
+          CGO_ENABLED=0 go build -ldflags "-s -w -X main.board=${board}" -o ./out/${board} .
+        done
     install:
       - |
         mkdir -p /rootfs/installers/
-
-        cp /pkg/src/soquartz-blade /rootfs/installers/soquartz-blade
+        cp /pkg/src/out/* /rootfs/installers/
 finalize:
   - from: /rootfs
     to: /rootfs

@@ -2,14 +2,30 @@ name: sbc-quartz
 variant: scratch
 shell: /toolchain/bin/bash
 dependencies:
-  - stage: soquartz-blade
+  - stage: quartz64-installers
   - stage: profiles
-  - stage: u-boot-soquartz-blade
+  - stage: u-boot-quartz64
     platform: linux/arm64
+  - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/kernel:{{ .BUILD_ARG_PKGS }}"
+    platform: linux/arm64
+    from: /dtb/rockchip/rk3566-quartz64-a.dtb
+    to: /rootfs/artifacts/arm64/dtb/rockchip/rk3566-quartz64-a.dtb
+  - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/kernel:{{ .BUILD_ARG_PKGS }}"
+    platform: linux/arm64
+    from: /dtb/rockchip/rk3566-quartz64-b.dtb
+    to: /rootfs/artifacts/arm64/dtb/rockchip/rk3566-quartz64-b.dtb
   - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/kernel:{{ .BUILD_ARG_PKGS }}"
     platform: linux/arm64
     from: /dtb/rockchip/rk3566-soquartz-blade.dtb
     to: /rootfs/artifacts/arm64/dtb/rockchip/rk3566-soquartz-blade.dtb
+  - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/kernel:{{ .BUILD_ARG_PKGS }}"
+    platform: linux/arm64
+    from: /dtb/rockchip/rk3566-soquartz-model-a.dtb
+    to: /rootfs/artifacts/arm64/dtb/rockchip/rk3566-soquartz-model-a.dtb
+  - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/kernel:{{ .BUILD_ARG_PKGS }}"
+    platform: linux/arm64
+    from: /dtb/rockchip/rk3566-soquartz-cm4.dtb
+    to: /rootfs/artifacts/arm64/dtb/rockchip/rk3566-soquartz-cm4.dtb
 finalize:
   - from: /rootfs
     to: /

@@ -1,4 +1,4 @@
-module soquartzBlade
+module quartz64
 
 go 1.22.6
 
