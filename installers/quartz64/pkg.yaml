@@ -14,9 +14,13 @@ steps:
         export PATH=${PATH}:${TOOLCHAIN}/go/bin
 
         cd /pkg/src
-        # One installer binary per overlay name; the board is baked in at link time.
-        for board in quartz64-a quartz64-b soquartz-blade soquartz-model-a soquartz-cm4; do
-          CGO_ENABLED=0 go build -ldflags "-s -w -X main.board=${board}" -o ./out/${board} .
+        # One installer binary per overlay name (Pkgfile vars.boards); board name
+        # and DTB are baked in at link time.
+        for entry in {{ .boards }}; do
+          IFS=: read -r name defconfig dtb <<< "${entry}"
+          CGO_ENABLED=0 go build \
+            -ldflags "-s -w -X main.board=${name} -X main.dtb=rockchip/${dtb}" \
+            -o ./out/${name} .
         done
     install:
       - |

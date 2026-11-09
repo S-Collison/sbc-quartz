@@ -4,11 +4,8 @@
 
 // Talos overlay installer for the Pine64 RK3566 family.
 //
-// One source, one binary per board: the board name is set at link time with
-//
-//	go build -ldflags "-X main.board=quartz64-a"
-//
-// and must match the overlay name passed to the imager (--overlay-name).
+// One source, one binary per board (see installers/quartz64/pkg.yaml). The
+// binary name and main.board must match the imager's --overlay-name.
 package main
 
 import (
@@ -25,24 +22,21 @@ import (
 // Rockchip boot ROM looks for the idbloader at sector 64.
 const off int64 = 512 * 64
 
-// board is injected with -ldflags "-X main.board=<name>".
-var board = ""
-
-// dtbs maps overlay/board name -> device tree path (relative to arm64/dtb and
-// to the ESP's /dtb directory). These names match U-Boot's
-// CONFIG_DEFAULT_FDT_FILE for each <board>-rk3566_defconfig, which is what
-// U-Boot's EFI boot path loads from the ESP.
-var dtbs = map[string]string{
-	"quartz64-a":       "rockchip/rk3566-quartz64-a.dtb",
-	"quartz64-b":       "rockchip/rk3566-quartz64-b.dtb",
-	"soquartz-blade":   "rockchip/rk3566-soquartz-blade.dtb",
-	"soquartz-model-a": "rockchip/rk3566-soquartz-model-a.dtb",
-	"soquartz-cm4":     "rockchip/rk3566-soquartz-cm4.dtb",
-}
+// board and dtb are injected at link time from the Pkgfile board table:
+//
+//	-ldflags "-X main.board=quartz64-a -X main.dtb=rockchip/rk3566-quartz64-a.dtb"
+//
+// dtb is relative to arm64/dtb in the overlay and to /dtb on the ESP, and must
+// equal U-Boot's CONFIG_DEFAULT_FDT_FILE for the board's defconfig, because
+// that is the file U-Boot's EFI boot path loads.
+var (
+	board = ""
+	dtb   = ""
+)
 
 func main() {
-	if _, ok := dtbs[board]; !ok {
-		fmt.Fprintf(os.Stderr, "installer built for unknown board %q\n", board)
+	if board == "" || dtb == "" {
+		fmt.Fprintln(os.Stderr, "installer built without -X main.board / -X main.dtb")
 		os.Exit(1)
 	}
 
@@ -94,7 +88,6 @@ func (i *quartz64) Install(options overlay.InstallOptions[quartz64ExtraOptions])
 		return err
 	}
 
-	dtb := dtbs[board]
 	src := filepath.Join(options.ArtifactsPath, "arm64/dtb", dtb)
 	dst := filepath.Join(options.MountPrefix, "/boot/EFI/dtb", dtb)
 

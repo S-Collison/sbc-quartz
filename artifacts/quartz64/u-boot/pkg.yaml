@@ -1,7 +1,7 @@
 # U-Boot for the Pine64 RK3566 family (Quartz64 A/B, SOQuartz on its baseboards).
 # One stage builds every board out-of-tree and installs
 #   /rootfs/artifacts/arm64/u-boot/<board>/u-boot-rockchip.bin
-# <board> must match the overlay/installer name (see installers/quartz64).
+# Boards are listed once, in Pkgfile vars.boards.
 #
 # References:
 #   - https://u-boot.readthedocs.io/en/latest/board/rockchip/rockchip.html
@@ -39,16 +39,22 @@ steps:
         test -f "${TPL}"  || { echo "missing rk3566 DDR TPL blob"; exit 1; }
         echo "BL31=${BL31} TPL=${TPL}"
 
-        for board in quartz64-a quartz64-b soquartz-blade soquartz-model-a soquartz-cm4; do
-          make O=build/${board} ${board}-rk3566_defconfig
-          make O=build/${board} -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" BL31="${BL31}" ROCKCHIP_TPL="${TPL}"
-          test -s build/${board}/u-boot-rockchip.bin
+        # Board table comes from Pkgfile (vars.boards). Each distinct defconfig is
+        # built once, even if several overlay names share it.
+        for entry in {{ .boards }}; do
+          IFS=: read -r name defconfig dtb <<< "${entry}"
+          if [ ! -s build/${defconfig}/u-boot-rockchip.bin ]; then
+            make O=build/${defconfig} ${defconfig}
+            make O=build/${defconfig} -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" BL31="${BL31}" ROCKCHIP_TPL="${TPL}"
+          fi
+          test -s build/${defconfig}/u-boot-rockchip.bin
         done
     install:
       - |
-        for board in quartz64-a quartz64-b soquartz-blade soquartz-model-a soquartz-cm4; do
-          mkdir -p /rootfs/artifacts/arm64/u-boot/${board}
-          cp build/${board}/u-boot-rockchip.bin /rootfs/artifacts/arm64/u-boot/${board}/
+        for entry in {{ .boards }}; do
+          IFS=: read -r name defconfig dtb <<< "${entry}"
+          mkdir -p /rootfs/artifacts/arm64/u-boot/${name}
+          cp build/${defconfig}/u-boot-rockchip.bin /rootfs/artifacts/arm64/u-boot/${name}/
         done
 finalize:
   - from: /rootfs

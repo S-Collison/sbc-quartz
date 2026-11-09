@@ -10,8 +10,13 @@ Talos Linux overlay for the Pine64 RK3566 family.
 | `soquartz-model-a` | SOQuartz on the Pine64 Model-A baseboard| `rk3566-soquartz-model-a.dtb`|
 | `soquartz-cm4`     | SOQuartz on a CM4-IO style carrier      | `rk3566-soquartz-cm4.dtb`    |
 
-Each board gets its own U-Boot (`<board>-rk3566_defconfig`, mainline TF-A BL31 +
-rkbin rk3566 DDR blob) and its own installer binary.
+SOQuartz is one module with many possible baseboards. Each overlay name pairs a
+U-Boot defconfig with a kernel DTB. The pairs are listed once, in `Pkgfile`
+(`vars.boards`). Third-party CM4 carriers can reuse the `soquartz-cm4` pair
+under their own name; see [docs/adding-a-baseboard.md](docs/adding-a-baseboard.md).
+
+One overlay image (`ghcr.io/s-collison/sbc-quartz`) covers every board. The
+separate `sbc-soquartz` folder isn't needed.
 
 ## Build
 
@@ -24,8 +29,9 @@ make sbc-quartz PUSH=true
 #    The ghcr package must be public (or the imager can't pull it).
 
 # 2. bootable image for one board (always --arch arm64, verified before it's returned)
-hack/build-image.sh quartz64-a            # optional 2nd arg: Talos version, default v1.14.5
-hack/build-image.sh soquartz-blade
+hack/build-image.sh                       # quartz64-a, soquartz-blade, soquartz-model-a
+hack/build-image.sh soquartz-cm4          # or name any boards
+TALOS_VERSION=v1.14.5 hack/build-image.sh quartz64-a
 ```
 
 Output: `_out/talos-<version>-<board>.raw.xz`.
