@@ -43,11 +43,15 @@ COMMON_ARGS += --platform=$(PLATFORM)
 COMMON_ARGS += --build-arg=SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH)
 COMMON_ARGS += --build-arg=PKGS_PREFIX="$(PKGS_PREFIX)"
 COMMON_ARGS += --build-arg=PKGS="$(PKGS)"
+COMMON_ARGS += --build-arg=KERNEL_PKGS="$(KERNEL_PKGS)"
 
 # extra variables
 
 PKGS_PREFIX ?= ghcr.io/siderolabs
 PKGS ?= v1.7.0-alpha.0-33-g3aacf03
+# kernel image the DTBs are taken from; keep in step with the Talos release
+# (Talos v1.14.5 -> siderolabs/pkgs v1.14.0-48-gf4bda77, Linux 6.18.58)
+KERNEL_PKGS ?= v1.14.0-48-gf4bda77
 
 # targets defines all the available targets
 

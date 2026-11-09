@@ -6,12 +6,15 @@ spec:
   extraBuildArgs:
     - PKGS_PREFIX
     - PKGS
+    - KERNEL_PKGS
   makefile:
     extraVariables:
       - name: PKGS_PREFIX
         defaultValue: ghcr.io/siderolabs
       - name: PKGS
         defaultValue: v1.7.0-alpha.0-33-g3aacf03
+      - name: KERNEL_PKGS
+        defaultValue: v1.14.0-48-gf4bda77
 ---
 kind: common.Build
 spec:

@@ -1,0 +1,160 @@
+# Builds the overlay, then Talos images + upgrade installers for each board,
+# and publishes a GitHub Release.
+#
+# Triggers:
+#   - tag v*                 -> release for the current Talos (or the input)
+#   - weekly schedule        -> builds the latest Talos release if it hasn't been released yet
+#   - manual (workflow_dispatch) with an optional Talos version
+#
+# Runs on GitHub's arm64 runners: U-Boot/TF-A build natively and the imager
+# runs natively. Free for public repos; in private repos it uses your plan's
+# free minutes.
+name: images
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "17 9 * * 1"   # Mondays 09:17 UTC
+  workflow_dispatch:
+    inputs:
+      talos_version:
+        description: "Talos version (e.g. v1.14.5). Empty = latest release"
+        required: false
+      force:
+        description: "Rebuild even if a release for this version already exists"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # Official extensions baked into every image. drbd: for Piraeus/LINSTOR on the M.2 SSD.
+  EXTENSIONS: "drbd"
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      talos: ${{ steps.v.outputs.talos }}
+      kernel_pkgs: ${{ steps.v.outputs.kernel_pkgs }}
+      overlay_tag: ${{ steps.v.outputs.overlay_tag }}
+      release_tag: ${{ steps.v.outputs.release_tag }}
+      skip: ${{ steps.v.outputs.skip }}
+      owner: ${{ steps.v.outputs.owner }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT: ${{ inputs.talos_version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          talos="${INPUT:-$(gh api repos/siderolabs/talos/releases/latest --jq .tag_name)}"
+          # The Talos Makefile pins the pkgs (kernel) build for that release.
+          kernel_pkgs="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/talos/${talos}/Makefile" \
+                         | sed -nE 's/^PKGS \?= *(.*)$/\1/p' | head -n1)"
+          [ -n "${kernel_pkgs}" ] || { echo "could not find PKGS for ${talos}"; exit 1; }
+          src="$(git describe --tag --always --match 'v[0-9]*')"
+          overlay_tag="${src}-${talos}"
+          release_tag="talos-${talos}-${src}"
+          skip=false
+          if [ "${GITHUB_EVENT_NAME}" = schedule ] || { [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${FORCE}" != true ]; }; then
+            gh release view "${release_tag}" >/dev/null 2>&1 && skip=true
+          fi
+          owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "talos=${talos}"; echo "kernel_pkgs=${kernel_pkgs}"
+            echo "overlay_tag=${overlay_tag}"; echo "release_tag=${release_tag}"
+            echo "skip=${skip}"; echo "owner=${owner}"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  overlay:
+    needs: resolve
+    if: needs.resolve.outputs.skip != 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: docker/setup-qemu-action@v3      # amd64 half of the overlay (installer binaries only)
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push overlay
+        run: |
+          make docker-sbc-quartz \
+            PLATFORM=linux/arm64,linux/amd64 \
+            KERNEL_PKGS="${{ needs.resolve.outputs.kernel_pkgs }}" \
+            TARGET_ARGS="--tag=${REGISTRY}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }} --push=true"
+
+  images:
+    needs: [resolve, overlay]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [quartz64-a, soquartz-blade, soquartz-model-a]
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build, verify, push installer
+        env:
+          TALOS_VERSION: ${{ needs.resolve.outputs.talos }}
+          OVERLAY_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }}
+          INSTALLER_REPO: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-installer
+        run: hack/build-image.sh "${{ matrix.board }}"
+      - name: Checksum
+        run: cd _out && sha256sum talos-*.raw.xz > "talos-${{ needs.resolve.outputs.talos }}-${{ matrix.board }}.raw.xz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.board }}
+          path: |
+            _out/talos-*.raw.xz
+            _out/talos-*.sha256
+          retention-days: 7
+
+  release:
+    needs: [resolve, images]
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Notes
+        run: |
+          o=${{ needs.resolve.outputs.owner }}; t=${{ needs.resolve.outputs.talos }}
+          cat > notes.md <<NOTES
+          Talos **${t}** for Pine64 RK3566 boards. Overlay \`${REGISTRY}/${o}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }}\`,
+          DTBs from siderolabs/pkgs \`${{ needs.resolve.outputs.kernel_pkgs }}\`. Extensions: \`${EXTENSIONS}\`.
+
+          | board | SD/eMMC image | upgrade installer |
+          |---|---|---|
+          | Quartz64 Model A | \`talos-${t}-quartz64-a.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-quartz64-a:${t}\` |
+          | SOQuartz + Blade | \`talos-${t}-soquartz-blade.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-soquartz-blade:${t}\` |
+          | SOQuartz + Model-A baseboard | \`talos-${t}-soquartz-model-a.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-soquartz-model-a:${t}\` |
+
+          Flash: \`xz -dc talos-${t}-<board>.raw.xz | sudo dd of=/dev/rdiskN bs=4m\`. Serial console: UART2, 1500000 8N1.
+          NOTES
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve.outputs.release_tag }}
+          name: Talos ${{ needs.resolve.outputs.talos }} (${{ needs.resolve.outputs.release_tag }})
+          body_path: notes.md
+          files: dist/*
