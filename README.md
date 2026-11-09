@@ -38,6 +38,8 @@ Output: `_out/talos-<version>-<board>.raw.xz`.
 
 ## Getting a cluster up
 
+**Start here: [docs/bring-up.md](docs/bring-up.md)** (images → network → Pi Zero → Pi 5 → workers → upgrades).
+
 Flash a release image, boot into maintenance mode, assign configs with
 holzkube-manager (or talosctl), and upgrade with tuppr:
 [docs/provision-and-upgrade.md](docs/provision-and-upgrade.md). The Pi Zero
