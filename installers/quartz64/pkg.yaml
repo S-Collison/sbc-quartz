@@ -1,18 +1,26 @@
 name: quartz64-installers
 variant: scratch
-shell: /toolchain/bin/bash
+shell: /bin/bash
 dependencies:
   - stage: base
 steps:
   - env:
-      GOPATH: /go
+      GOPATH: /tmp/go
+    network: default
     cachePaths:
       - /.cache/go-build
-      - /go/pkg
+      - /tmp/go/pkg
+    prepare:
+      - |
+        cd /pkg/src
+        go mod download
+  - env:
+      GOPATH: /tmp/go
+    cachePaths:
+      - /.cache/go-build
+      - /tmp/go/pkg
     build:
       - |
-        export PATH=${PATH}:${TOOLCHAIN}/go/bin
-
         cd /pkg/src
         # One installer binary per overlay name (Pkgfile vars.boards); board name
         # and DTB are baked in at link time.

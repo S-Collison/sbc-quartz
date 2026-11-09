@@ -71,15 +71,20 @@ ENTRY="$(printf '%s\n' "${TABLE}" | grep "^${BOARD}:" || true)"
 DTB="${ENTRY##*:}"
 
 mkdir -p "${OUT}"
-rm -f "${OUT}/metal-arm64.raw.xz" "${OUT}/installer-arm64.tar"
+rm -f "${OUT}/installer-arm64.tar"
 
 echo ">> imager ${TALOS_VERSION}  overlay ${OVERLAY_IMAGE}  board ${BOARD}"
-imager metal --arch arm64 \
+# Use the overlay's own profile (named after the board): it pins GRUB. Plain
+# "metal" would pick systemd-boot on arm64 for Talos >= 1.10.
+rm -f "${OUT}"/*.raw.xz.tmp 2>/dev/null || true
+imager "${BOARD}" --arch arm64 \
   --overlay-image "${OVERLAY_IMAGE}" --overlay-name "${BOARD}" \
   ${EXT_ARGS[@]+"${EXT_ARGS[@]}"} || return 1
 
 IMG="${OUT}/talos-${TALOS_VERSION}-${BOARD}.raw.xz"
-mv "${OUT}/metal-arm64.raw.xz" "${IMG}" || return 1
+NEW="$(ls -t "${OUT}"/*.raw.xz 2>/dev/null | grep -v '/talos-' | head -n1)"
+[ -n "${NEW}" ] || { echo "imager produced no .raw.xz" >&2; return 1; }
+mv "${NEW}" "${IMG}" || return 1
 
 echo ">> verifying ${IMG}"
 TMP="$(mktemp)"
@@ -95,6 +100,11 @@ if LC_ALL=C grep -aq 'BOOTAA64EFI' "${TMP}"; then
   echo "   ok  BOOTAA64.EFI present (arm64 EFI loader)"
 else
   echo "   BAD no BOOTAA64.EFI — not an arm64 image"; fail=1
+fi
+if LC_ALL=C grep -aq 'LOADER     ' "${TMP}"; then
+  echo "   BAD systemd-boot loader/ on ESP — built with the generic profile, expected GRUB"; fail=1
+else
+  echo "   ok  GRUB layout (no systemd-boot loader/ dir)"
 fi
 if LC_ALL=C grep -aq 'BOOTX64 EFI' "${TMP}"; then
   echo "   BAD BOOTX64.EFI present — this is an amd64 image"; fail=1

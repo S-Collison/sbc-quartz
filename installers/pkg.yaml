@@ -6,9 +6,9 @@ dependencies:
   - stage: profiles
   - stage: u-boot-quartz64
     platform: linux/arm64
-  # All Rockchip DTBs from the kernel Talos actually boots (KERNEL_PKGS, set
+  # All Rockchip DTBs from the kernel Talos actually boots (PKGS, set
   # per Talos release), so a new baseboard only needs a Pkgfile board entry.
-  - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/kernel:{{ .BUILD_ARG_KERNEL_PKGS }}"
+  - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/kernel:{{ .BUILD_ARG_PKGS }}"
     platform: linux/arm64
     from: /dtb/rockchip
     to: /rootfs/artifacts/arm64/dtb/rockchip

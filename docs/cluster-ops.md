@@ -1,5 +1,25 @@
 # Running the cluster: install, storage, upgrades
 
+## Planned topology
+
+```
+UniFi Express 7 (gateway, Wi-Fi mesh) ── 2.5G LAN ── PoE+ switch (cluster VLAN)
+                                                     ├─ Raspberry Pi 5 16GB  control plane (Talos rpi5 overlay), SSD, USB disk
+                                                     ├─ Quartz64 A           worker (eMMC boot, NVMe -> LINSTOR)
+                                                     ├─ SOQuartz + Blade     worker (NVMe -> LINSTOR)
+                                                     └─ SOQuartz + Model-A   worker
+```
+
+- Put the cluster on its own VLAN. East-west traffic then stays on the switch,
+  and only ingress and egress cross the Express 7.
+- Load balancing, DNS and TLS run in-cluster: Cilium (L2 announcements) or
+  MetalLB for service IPs, Gateway API / ingress, external-dns, cert-manager,
+  and an OIDC provider (e.g. Pocket ID / Authelia / Authentik).
+- For outside access, forward 443 on the Express 7 to the ingress VIP, or use
+  Cloudflare Tunnel (no open ports).
+- Talos has no in-kernel NFS server (`nfsd`). For NFS from the Pi, run a
+  user-space server (NFS-Ganesha) in a pod, pinned to the Pi.
+
 ## What CI publishes
 
 `.github/workflows/images.yaml` runs on a tag, weekly, or by hand. It:
@@ -21,26 +41,49 @@ Add or remove boards in the `matrix.board` list. Add extensions in `env.EXTENSIO
 using official extension names such as `drbd` or `iscsi-tools`. The script pins
 them to the digests published for that Talos version.
 
-## First install
+## First install (simplest bare-metal path)
 
-1. Flash the release image for the board to SD (see README) and boot it. The node
-   comes up in maintenance mode.
-2. Generate the config with the board's patches:
+**Write the release image straight onto the disk the board will boot from**,
+then apply config. Don't boot the SD card and let Talos "install" to eMMC:
+in install mode, Talos 1.14 auto-selects systemd-boot whenever U-Boot's UEFI
+is present. These images deliberately use GRUB, which is what Sidero ships
+for Rockchip boards. Upgrades keep whatever boot loader is already on the disk.
+
+| board | boot disk | how to write it |
+|---|---|---|
+| Quartz64 A | eMMC module (recommended) or SD | eMMC: Pine64 USB eMMC adapter, then `dd` from the Mac |
+| SOQuartz (Blade / Model-A) | eMMC on the module, or the baseboard SD | eMMC: rpiboot-style USB mass storage isn't available, so flash SD, or use a Pine64 eMMC module + adapter |
+
+1. `xz -dc talos-<ver>-<board>.raw.xz | sudo dd of=/dev/rdiskN bs=4m` onto that disk, insert, power on.
+   The node comes up in maintenance mode and gets a DHCP address.
+2. Generate and apply the config. `install.disk` is the disk you just wrote, so
+   Talos sees it's already installed and doesn't reinstall:
 
    ```sh
-   talosctl gen config homelab https://<vip-or-cp-ip>:6443 \
+   talosctl gen config homelab https://<cp-ip>:6443 \
      --config-patch @talos/patches/drbd.yaml \
      --config-patch @talos/patches/tuppr.yaml
-   talosctl apply-config --insecure -n <ip> -f controlplane.yaml \
+   talosctl apply-config --insecure -n <ip> -f worker.yaml \
      --config-patch @talos/patches/install-soquartz-blade.yaml
    ```
 
    `machine.install.image` must be **the board's own installer**. The stock
    `ghcr.io/siderolabs/installer` and Image Factory installers don't contain
    this overlay.
+3. The RK3566 boot ROM can't boot NVMe directly. Keep Talos on eMMC/SD and give the M.2 SSD to storage.
 
-3. Choose the install disk: eMMC or SD. The RK3566 boot ROM cannot boot from
-   NVMe, so keep the OS on eMMC/SD and give the M.2 SSD to storage.
+## Network boot (later)
+
+- The boot ROM can't do PXE. U-Boot can (Ethernet is enabled in all five
+  defconfigs), but U-Boot has to come from SPI, eMMC or SD first.
+- **Quartz64 A**: U-Boot builds `u-boot-rockchip-spi.bin`, shipped in the overlay
+  under `artifacts/arm64/u-boot/quartz64-a/`. With it on the SPI flash, the board
+  could boot entirely from the network.
+- **SOQuartz**: no SPI flash in U-Boot, so U-Boot stays on eMMC/SD. Netbooting only
+  saves you reflashing the OS, not the boot loader.
+- A PXE install still has to finish by writing to the boot disk with the board
+  installer, and it hits the same GRUB vs systemd-boot install-mode issue above.
+  That's why direct flashing is the recommended path for now.
 
 ## M.2 SSD with DRBD / LINSTOR (Piraeus)
 

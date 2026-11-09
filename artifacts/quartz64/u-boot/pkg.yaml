@@ -1,36 +1,28 @@
-# U-Boot for the Pine64 RK3566 family (Quartz64 A/B, SOQuartz on its baseboards).
-# One stage builds every board out-of-tree and installs
-#   /rootfs/artifacts/arm64/u-boot/<board>/u-boot-rockchip.bin
-# Boards are listed once, in Pkgfile vars.boards.
+# U-Boot for the Pine64 RK3566 family. Boards come from Pkgfile vars.boards;
+# each distinct defconfig is built once and installed as
+#   /rootfs/artifacts/arm64/u-boot/<overlay-name>/u-boot-rockchip.bin
+#   /rootfs/artifacts/arm64/u-boot/<overlay-name>/u-boot-rockchip-spi.bin  (boards with SPI flash, e.g. quartz64-a)
 #
-# References:
-#   - https://u-boot.readthedocs.io/en/latest/board/rockchip/rockchip.html
+# References: https://u-boot.readthedocs.io/en/latest/board/rockchip/rockchip.html
 name: u-boot-quartz64
 variant: scratch
-shell: /toolchain/bin/bash
+shell: /bin/bash
 dependencies:
   - stage: base
+  # TF-A treats rk3566/rk3568 as a single platform
   - stage: arm-trusted-firmware-rk3568
   - stage: rkbin-rk3566
 steps:
   - sources:
-      - url: https://ftp.denx.de/pub/u-boot/u-boot-{{ .uboot_version }}.tar.bz2
-        destination: u-boot.tar.bz2
+      - url: https://github.com/u-boot/u-boot/archive/refs/tags/v{{ .uboot_version }}.tar.gz
+        destination: u-boot.tar.gz
         sha256: "{{ .uboot_sha256 }}"
         sha512: "{{ .uboot_sha512 }}"
     env:
       SOURCE_DATE_EPOCH: {{ .BUILD_ARG_SOURCE_DATE_EPOCH }}
     prepare:
       - |
-        mkdir -p /usr/bin \
-          && ln -sf /toolchain/bin/env /usr/bin/env \
-          && ln -sf /toolchain/bin/python3 /toolchain/bin/python
-
-        pip3 install pyelftools setuptools
-
-        tar xf u-boot.tar.bz2 --strip-components=1
-
-        patch -p1 < /pkg/patches/uboot-byteorder.patch
+        tar xf u-boot.tar.gz --strip-components=1
     build:
       - |
         BL31=/libs/arm-trusted-firmware/rk3568/bl31.elf
@@ -39,15 +31,18 @@ steps:
         test -f "${TPL}"  || { echo "missing rk3566 DDR TPL blob"; exit 1; }
         echo "BL31=${BL31} TPL=${TPL}"
 
-        # Board table comes from Pkgfile (vars.boards). Each distinct defconfig is
-        # built once, even if several overlay names share it.
         for entry in {{ .boards }}; do
           IFS=: read -r name defconfig dtb <<< "${entry}"
-          if [ ! -s build/${defconfig}/u-boot-rockchip.bin ]; then
-            make O=build/${defconfig} ${defconfig}
-            make O=build/${defconfig} -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" BL31="${BL31}" ROCKCHIP_TPL="${TPL}"
+          out=build/${defconfig}
+          if [ ! -s ${out}/u-boot-rockchip.bin ]; then
+            make O=${out} ${defconfig}
+            # Host tools: image signing needs the OpenSSL ENGINE API (gone from the toolchain's
+            # OpenSSL) and mkeficapsule needs gnutls; neither is used for Rockchip boot images.
+            ./scripts/config --file ${out}/.config --disable TOOLS_LIBCRYPTO --disable TOOLS_KWBIMAGE --disable TOOLS_MKEFICAPSULE
+            make O=${out} olddefconfig
+            make O=${out} -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" BL31="${BL31}" ROCKCHIP_TPL="${TPL}"
           fi
-          test -s build/${defconfig}/u-boot-rockchip.bin
+          test -s ${out}/u-boot-rockchip.bin
         done
     install:
       - |
@@ -55,6 +50,9 @@ steps:
           IFS=: read -r name defconfig dtb <<< "${entry}"
           mkdir -p /rootfs/artifacts/arm64/u-boot/${name}
           cp build/${defconfig}/u-boot-rockchip.bin /rootfs/artifacts/arm64/u-boot/${name}/
+          if [ -s build/${defconfig}/u-boot-rockchip-spi.bin ]; then
+            cp build/${defconfig}/u-boot-rockchip-spi.bin /rootfs/artifacts/arm64/u-boot/${name}/
+          fi
         done
 finalize:
   - from: /rootfs

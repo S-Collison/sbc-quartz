@@ -9,8 +9,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 
 	"github.com/siderolabs/go-copy/copy"
@@ -40,14 +42,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	adapter.Execute(&quartz64{})
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	adapter.Execute(ctx, &quartz64{})
 }
 
 type quartz64 struct{}
 
 type quartz64ExtraOptions struct{}
 
-func (i *quartz64) GetOptions(extra quartz64ExtraOptions) (overlay.Options, error) {
+func (i *quartz64) GetOptions(_ context.Context, _ quartz64ExtraOptions) (overlay.Options, error) {
 	return overlay.Options{
 		Name: board,
 		KernelArgs: []string{
@@ -64,7 +69,7 @@ func (i *quartz64) GetOptions(extra quartz64ExtraOptions) (overlay.Options, erro
 	}, nil
 }
 
-func (i *quartz64) Install(options overlay.InstallOptions[quartz64ExtraOptions]) error {
+func (i *quartz64) Install(_ context.Context, options overlay.InstallOptions[quartz64ExtraOptions]) error {
 	f, err := os.OpenFile(options.InstallDisk, os.O_RDWR|unix.O_CLOEXEC, 0o666)
 	if err != nil {
 		return fmt.Errorf("failed to open %s: %w", options.InstallDisk, err)
@@ -91,7 +96,7 @@ func (i *quartz64) Install(options overlay.InstallOptions[quartz64ExtraOptions])
 	src := filepath.Join(options.ArtifactsPath, "arm64/dtb", dtb)
 	dst := filepath.Join(options.MountPrefix, "/boot/EFI/dtb", dtb)
 
-	if err = os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err = os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
 

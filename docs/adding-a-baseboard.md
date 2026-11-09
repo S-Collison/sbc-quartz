@@ -15,7 +15,7 @@ gigabit PHY are on the module, and the baseboard decides everything else
 The imager then combines Talos (arm64) with this overlay:
 
 ```
-imager metal --arch arm64 --overlay-image ghcr.io/s-collison/sbc-quartz:<tag> --overlay-name <board>
+imager <board> --arch arm64 --overlay-image ghcr.io/s-collison/sbc-quartz:<tag> --overlay-name <board>
    └─ runs installers/<board>  ->  writes u-boot-rockchip.bin at sector 64
                                    copies dtb to the ESP at /dtb/rockchip/<dtb>
                                    adds console=ttyS2,1500000n8 to the kernel args
@@ -45,7 +45,9 @@ tar tjf u-boot-<ver>.tar.bz2 | grep 'configs/.*rk3566_defconfig'      # U-Boot
 ```
 
 1. Add a line to `boards:` in `Pkgfile`.
-2. `cp profiles/boards/soquartz-blade.yaml profiles/boards/<name>.yaml`
+2. `cp profiles/boards/soquartz-blade.yaml profiles/boards/<name>.yaml`. The file name must equal the
+   overlay name: `hack/build-image.sh` runs `imager <name>`, which picks this profile and its
+   `bootloader: grub`.
 3. `make sbc-quartz PUSH=true && hack/build-image.sh <name>`
 
 ## Case B: third-party CM4 carrier (most common)

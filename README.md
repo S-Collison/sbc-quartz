@@ -29,7 +29,7 @@ make sbc-quartz PUSH=true
 #    The ghcr package must be public (or the imager can't pull it).
 
 # 2. bootable image for one board (always --arch arm64, verified before it's returned)
-hack/build-image.sh                       # quartz64-a, soquartz-blade, soquartz-model-a
+hack/build-image.sh                       # quartz64-a, soquartz-blade, soquartz-model-a (uses each board's GRUB profile)
 hack/build-image.sh soquartz-cm4          # or name any boards
 TALOS_VERSION=v1.14.5 hack/build-image.sh quartz64-a
 ```
@@ -61,12 +61,28 @@ xz -dc _out/talos-v1.14.5-quartz64-a.raw.xz | sudo dd of=/dev/rdisk4 bs=4m
 
 ## Install to disk / upgrade
 
-Use an installer image built with the same overlay:
+Flash the image straight onto the disk the board boots from (eMMC or SD); see
+[docs/cluster-ops.md](docs/cluster-ops.md#first-install-simplest-bare-metal-path)
+for why. For upgrades, use the board's installer image:
 
 ```sh
-docker run --rm -t -v $PWD/_out:/out ghcr.io/siderolabs/imager:v1.14.5 installer \
-  --arch arm64 --overlay-image ghcr.io/s-collison/sbc-quartz:<tag> --overlay-name quartz64-a
+INSTALLER_REPO=ghcr.io/s-collison/talos-installer hack/build-image.sh quartz64-a
+# -> ghcr.io/s-collison/talos-installer-quartz64-a:<talos-version>
+talosctl -n <ip> upgrade --image ghcr.io/s-collison/talos-installer-quartz64-a:v1.14.5
 ```
 
-then push `_out/installer-arm64.tar` to a registry and reference it in
-`machine.install.image` / `talosctl upgrade --image`.
+CI publishes these installers on every release.
+
+## Versions
+
+| component | version |
+|---|---|
+| Talos (imager, machinery Go library) | v1.14.5 |
+| DTBs | Talos 1.14.5 kernel (`PKGS` = siderolabs/pkgs v1.14.0-48-gf4bda77, Linux 6.18.58) |
+| U-Boot | 2026.10 |
+| TF-A (BL31) | lts-v2.14.11 |
+| rkbin (DDR blob) | 74213af, rk3566_ddr_1056MHz |
+| toolchain | siderolabs/tools v1.15.0-alpha.0-16-g54f72f9, bldr v0.6.5 |
+
+These pins match siderolabs/sbc-rockchip v0.3.0, which builds RK3566/RK3568
+boards with them. CI moves `PKGS` to whatever the latest Talos release uses.

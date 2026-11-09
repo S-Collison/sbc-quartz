@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     outputs:
       talos: ${{ steps.v.outputs.talos }}
-      kernel_pkgs: ${{ steps.v.outputs.kernel_pkgs }}
+      pkgs: ${{ steps.v.outputs.pkgs }}
       overlay_tag: ${{ steps.v.outputs.overlay_tag }}
       release_tag: ${{ steps.v.outputs.release_tag }}
       skip: ${{ steps.v.outputs.skip }}
@@ -60,9 +60,9 @@ jobs:
           set -euo pipefail
           talos="${INPUT:-$(gh api repos/siderolabs/talos/releases/latest --jq .tag_name)}"
           # The Talos Makefile pins the pkgs (kernel) build for that release.
-          kernel_pkgs="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/talos/${talos}/Makefile" \
+          pkgs="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/talos/${talos}/Makefile" \
                          | sed -nE 's/^PKGS \?= *(.*)$/\1/p' | head -n1)"
-          [ -n "${kernel_pkgs}" ] || { echo "could not find PKGS for ${talos}"; exit 1; }
+          [ -n "${pkgs}" ] || { echo "could not find PKGS for ${talos}"; exit 1; }
           src="$(git describe --tag --always --match 'v[0-9]*')"
           overlay_tag="${src}-${talos}"
           release_tag="talos-${talos}-${src}"
@@ -72,7 +72,7 @@ jobs:
           fi
           owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           {
-            echo "talos=${talos}"; echo "kernel_pkgs=${kernel_pkgs}"
+            echo "talos=${talos}"; echo "pkgs=${pkgs}"
             echo "overlay_tag=${overlay_tag}"; echo "release_tag=${release_tag}"
             echo "skip=${skip}"; echo "owner=${owner}"
           } | tee -a "$GITHUB_OUTPUT"
@@ -96,7 +96,7 @@ jobs:
         run: |
           make docker-sbc-quartz \
             PLATFORM=linux/arm64,linux/amd64 \
-            KERNEL_PKGS="${{ needs.resolve.outputs.kernel_pkgs }}" \
+            PKGS="${{ needs.resolve.outputs.pkgs }}" \
             TARGET_ARGS="--tag=${REGISTRY}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }} --push=true"
 
   images:
@@ -142,7 +142,7 @@ jobs:
           o=${{ needs.resolve.outputs.owner }}; t=${{ needs.resolve.outputs.talos }}
           cat > notes.md <<NOTES
           Talos **${t}** for Pine64 RK3566 boards. Overlay \`${REGISTRY}/${o}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }}\`,
-          DTBs from siderolabs/pkgs \`${{ needs.resolve.outputs.kernel_pkgs }}\`. Extensions: \`${EXTENSIONS}\`.
+          DTBs from siderolabs/pkgs \`${{ needs.resolve.outputs.pkgs }}\`. Extensions: \`${EXTENSIONS}\`.
 
           | board | SD/eMMC image | upgrade installer |
           |---|---|---|
