@@ -1,19 +1,16 @@
 # Userspace half of the "media" flavor. Separate from images.yaml on purpose:
 # these images don't depend on the Talos version, only on FFmpeg and the
-# Scrypted base, so they rebuild when containers/ changes and weekly for new
-# Scrypted releases.
+# Scrypted base, so they rebuild when containers/ changes or a base image
+# moves (decided by track.yaml).
 #
 #   media-kernel.yaml    kernel side: Hantro/RGA modules -> /dev/video*, /dev/media* on media nodes
 #   media-containers.yaml (this) userspace side: FFmpeg 8.1 + V4L2 Request hwaccel that uses them
 #     ghcr.io/<owner>/scrypted-rk3566      Scrypted + /opt/ffmpeg-v4l2request/bin/ffmpeg
 #     ghcr.io/<owner>/ffmpeg-v4l2request   same FFmpeg on Debian, for other apps / testing
 name: media-containers
+# Started by track.yaml when the Dockerfile changed or a base image has a new
+# digest (it compares against the labels set below). Can also be run by hand.
 on:
-  push:
-    branches: [main]
-    paths: ["containers/**", ".github/workflows/media-containers.yaml"]
-  schedule:
-    - cron: "41 10 * * 1"     # weekly: pick up new Scrypted base images
   workflow_dispatch:
 permissions:
   contents: read
@@ -41,17 +38,22 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         run: |
+          set -euo pipefail
           owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          base_digest="$(docker buildx imagetools inspect "${{ matrix.base }}" --format '{{json .Manifest}}' | jq -r .digest)"
           docker buildx build containers/ffmpeg-v4l2request \
             --platform linux/arm64 \
-            --build-arg BASE_IMAGE=${{ matrix.base }} \
-            --tag ghcr.io/${owner}/${{ matrix.name }}:latest \
-            --tag ghcr.io/${owner}/${{ matrix.name }}:$(date -u +%Y%m%d) \
+            --build-arg BASE_IMAGE="${{ matrix.base }}@${base_digest}" \
+            --label org.opencontainers.image.revision="${GITHUB_SHA}" \
+            --label org.opencontainers.image.base.name="${{ matrix.base }}" \
+            --label org.opencontainers.image.base.digest="${base_digest}" \
+            --tag "ghcr.io/${owner}/${{ matrix.name }}:latest" \
+            --tag "ghcr.io/${owner}/${{ matrix.name }}:$(date -u +%Y%m%d)" \
             --push
 
   report:
     needs: build
-    if: failure() && github.event_name != 'pull_request'
+    if: failure()
     runs-on: ubuntu-24.04-arm
     env:
       GH_TOKEN: ${{ github.token }}

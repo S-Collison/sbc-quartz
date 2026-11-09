@@ -1,7 +1,7 @@
 # FFmpeg 8.1 + V4L2 Request API hwaccels (Kwiboo, pending upstream as FFmpeg PR20847),
 # for mainline stateless decoders: Hantro G1 on RK356x (H.264/VP8/MPEG-2).
 #
-# Built by .github/workflows/media-containers.yaml on top of two bases:
+# Built by .github/workflows/media-containers.yaml (started by track.yaml) on top of two bases:
 #   BASE_IMAGE=ghcr.io/koush/scrypted:latest -> ghcr.io/<owner>/scrypted-rk3566
 #   BASE_IMAGE=debian:trixie-slim            -> ghcr.io/<owner>/ffmpeg-v4l2request
 #
@@ -14,7 +14,8 @@
 ARG BUILDER_IMAGE=ubuntu:24.04
 ARG BASE_IMAGE=ghcr.io/koush/scrypted:latest
 ARG FFMPEG_REPO=https://github.com/Kwiboo/FFmpeg.git
-# branch v4l2-request-n8.1
+# track.yaml moves FFMPEG_REF to the head of FFMPEG_BRANCH daily
+ARG FFMPEG_BRANCH=v4l2-request-n8.1
 ARG FFMPEG_REF=b57fbbe50c9b2656fad86a1a7eeabfd2b2a50935
 
 FROM ${BUILDER_IMAGE} AS build
