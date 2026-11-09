@@ -44,7 +44,7 @@ images under `ghcr.io/s-collison/talos-media/*`). Media nodes also get
    pxelinux.cfg, U-Boot binaries);
 5. creates a GitHub Release `talos-<talos>-<repo-tag>` with all of it and checksums.
 
-`containers.yaml` builds `ghcr.io/s-collison/scrypted-rk3566` and
+`media-containers.yaml` builds `ghcr.io/s-collison/scrypted-rk3566` and
 `ghcr.io/s-collison/ffmpeg-v4l2request` (FFmpeg 8.1 + V4L2 Request hwaccel).
 
 ## First install (simplest bare-metal path)

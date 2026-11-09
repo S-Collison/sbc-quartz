@@ -1,9 +1,17 @@
-# Builds the FFmpeg V4L2 Request images (arm64) used with the "media" kernel flavor.
-name: containers
+# Userspace half of the "media" flavor. Separate from images.yaml on purpose:
+# these images don't depend on the Talos version, only on FFmpeg and the
+# Scrypted base, so they rebuild when containers/ changes and weekly for new
+# Scrypted releases.
+#
+#   media-kernel.yaml    kernel side: Hantro/RGA modules -> /dev/video*, /dev/media* on media nodes
+#   media-containers.yaml (this) userspace side: FFmpeg 8.1 + V4L2 Request hwaccel that uses them
+#     ghcr.io/<owner>/scrypted-rk3566      Scrypted + /opt/ffmpeg-v4l2request/bin/ffmpeg
+#     ghcr.io/<owner>/ffmpeg-v4l2request   same FFmpeg on Debian, for other apps / testing
+name: media-containers
 on:
   push:
     branches: [main]
-    paths: ["containers/**", ".github/workflows/containers.yaml"]
+    paths: ["containers/**", ".github/workflows/media-containers.yaml"]
   schedule:
     - cron: "41 10 * * 1"     # weekly: pick up new Scrypted base images
   workflow_dispatch:
