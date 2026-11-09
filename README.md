@@ -41,7 +41,7 @@ Output: `_out/talos-<version>-<board>.raw.xz`.
 `.github/workflows/images.yaml` builds images and upgrade installers for
 quartz64-a, soquartz-blade and soquartz-model-a for the latest Talos release.
 It runs weekly, on `v*` tags, or by hand, and publishes them as a GitHub Release.
-Cluster setup, DRBD/LINSTOR on the M.2 SSD and upgrades are covered in
+Hardware video limits (no Rockchip MPP on Talos): [docs/hardware-video.md](docs/hardware-video.md). Cluster setup, DRBD/LINSTOR on the M.2 SSD and upgrades are covered in
 [docs/cluster-ops.md](docs/cluster-ops.md).
 
 ## Flash and first boot
