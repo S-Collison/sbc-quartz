@@ -37,8 +37,14 @@ or keep them on its machine class:
 - Set `machine.install.disk` to the disk you flashed (`/dev/mmcblk0` or `/dev/mmcblk1`; check
   with `talosctl get disks --insecure -n <ip>`).
 
-Control plane: apply the controlplane config to the Pi 5 and bootstrap etcd there
-(`talosctl bootstrap -n 10.20.0.10`). Every other node gets worker configs.
+Control plane: the **Pi 5** (16 GB) is the API server and also runs Plex (direct
+play), Blu-ray ripping and NFS. Apply the controlplane config with
+`talos/patches/rpi5-controlplane.yaml` **on first apply**: it moves EPHEMERAL (etcd,
+images, logs) off the microSD onto the SSD, makes the rest of the SSD a `media` user
+volume (`/var/mnt/media`), allows workloads on the control plane, and reserves
+CPU/RAM for etcd and the API server. Then bootstrap etcd there
+(`talosctl bootstrap -n 10.20.0.10`). Every other node gets worker configs. The Pi
+Zero stays outside the cluster (holzkube, etcd backup copies).
 
 ## 3. Upgrades: tuppr (not holzkube)
 
