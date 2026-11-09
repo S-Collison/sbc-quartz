@@ -1,54 +1,51 @@
 # Running the cluster: install, storage, upgrades
 
-## Planned topology (routed at the switch)
+## Topology
 
-```
- Internet ── UniFi Express 7 ── LAN 192.168.1.0/24 (Wi-Fi mesh, onsite hardware)
-                  │  uplink port: access port in the LAN only (cluster VLAN NOT trunked to the Express/mesh)
-                  │
-   USW-Enterprise-8-PoE (Layer 3)   LAN IP 192.168.1.2
-        SVI 10.20.0.1/24  = cluster VLAN 20 (lives only on this switch)
-        ├─ Raspberry Pi 5 16GB   10.20.0.10  control plane / API (rpi5 overlay)
-        ├─ Quartz64 A            10.20.0.21  worker
-        ├─ SOQuartz + Blade      10.20.0.22  worker
-        ├─ SOQuartz + Model-A    10.20.0.23  worker
-        └─ (optional) cameras / onsite gear in their own VLAN, also routed here
-   Service VIPs (MetalLB/Cilium L2): 10.20.0.200-250
-```
+The existing PoE switch carries a dedicated cluster VLAN. A Pi Zero provides
+DHCP/TFTP/DNS and holzkube-manager, the Pi 5 is the control plane (API) and NFS,
+and the Quartz boards are workers. Full layout, VLAN settings and the PXE install
+flow are in [netboot.md](netboot.md).
 
-- In UniFi Network, create the cluster network with the **Enterprise 8 as its router**
-  (a Layer 3 network on the switch). The switch does inter-VLAN routing at line rate.
-  UniFi gives the Express 7 the return route, and NAT for internet access.
-- Cluster broadcast and multicast (ARP, L2 VIP announcements, mDNS) stay on the
-  switch. Only routed unicast to and from the LAN, and internet traffic, crosses the uplink.
-- Onsite hardware on the LAN reaches the API (`10.20.0.10:6443`, `:50000`) and
-  service VIPs through the switch. Restrict it with switch ACLs / UniFi firewall zones if needed.
-- Routing doesn't carry **mDNS/SSDP discovery** (HomeKit, Chromecast, some cameras).
-  Turn on UniFi's mDNS reflector for the two networks, or put that gear on the cluster VLAN.
-- Outside access: on the Express 7, forward 443 to the ingress VIP (10.20.0.200), or use
-  Cloudflare Tunnel (no open ports). TLS via cert-manager; OIDC via Pocket ID / Authelia / Authentik.
-- Talos has no in-kernel NFS server (`nfsd`). For NFS from the Pi, run NFS-Ganesha in a pod pinned to the Pi.
+- Load balancing, DNS and TLS run in-cluster: MetalLB/Cilium L2 VIPs in VLAN 20,
+  Gateway API, external-dns, cert-manager, and an OIDC provider (Pocket ID /
+  Authelia / Authentik). Outside access: forward 443 on the Express 7 to the
+  ingress VIP, or use Cloudflare Tunnel.
+- Onsite LAN hardware reaches the API and VIPs through the Express 7 (inter-VLAN
+  routing + firewall zones). mDNS/SSDP need UniFi's mDNS reflector.
+- If you later want routing off the gateway, a Layer 3 switch (e.g. UniFi
+  Enterprise 8 PoE) can host the VLAN 20 gateway instead. Nothing else changes.
+- Talos has no in-kernel NFS server (`nfsd`). NFS on the Pi 5 runs as NFS-Ganesha in a pod.
+
+## Flavors
+
+| flavor | kernel | extensions | use |
+|---|---|---|---|
+| `stock` | Talos kernel as released | official `drbd` | default |
+| `media` | same kernel + `kernel/media.config` (Hantro G1/VEPU, RGA) | `drbd` rebuilt for that kernel | SOQuartz/Quartz64 nodes doing video decode (Scrypted) |
+
+Talos enforces module signatures, so the media flavor rebuilds the kernel, its DRBD
+module, `installer-base` and `imager` together (`.github/workflows/media-kernel.yaml`,
+images under `ghcr.io/s-collison/talos-media/*`). Media nodes also get
+`talos/patches/media.yaml` (loads `hantro_vpu`, `rockchip_rga`, labels the node).
 
 ## What CI publishes
 
 `.github/workflows/images.yaml` runs on a tag, weekly, or by hand. It:
 
-1. finds the latest Talos release (or the version you give it) and the kernel
-   build it uses (`PKGS` in that release's Makefile), so the DTBs match the
-   kernel that actually boots;
-2. builds the overlay `ghcr.io/s-collison/sbc-quartz:<repo-tag>-<talos>`
-   (linux/arm64 + amd64) on a native arm64 runner;
-3. for `quartz64-a`, `soquartz-blade` and `soquartz-model-a`:
-   - builds and verifies `talos-<talos>-<board>.raw.xz` with the `drbd` extension;
-   - pushes the upgrade installer `ghcr.io/s-collison/talos-installer-<board>:<talos>`;
-4. creates a GitHub Release `talos-<talos>-<repo-tag>` with the images and their checksums.
+1. finds the latest Talos release (or the version you give it) and the kernel build
+   it uses (`PKGS` in that release's Makefile);
+2. builds the media kernel stack if it's missing (`media-kernel.yaml`), and the overlay
+   `ghcr.io/s-collison/sbc-quartz:<repo-tag>-<talos>`;
+3. for each flavor × board (`quartz64-a`, `soquartz-blade`, `soquartz-model-a`):
+   - `talos-<talos>-<board>[-media].raw.xz`, verified (idbloader, arm64 GRUB, fdtfile, PXE);
+   - upgrade installer `ghcr.io/s-collison/talos-installer-<board>[-media]:<talos>`;
+4. builds `netboot-<talos>-<flavor>.tar.gz` (raw kernel Image, initramfs, DTBs,
+   pxelinux.cfg, U-Boot binaries);
+5. creates a GitHub Release `talos-<talos>-<repo-tag>` with all of it and checksums.
 
-The weekly run skips a version that already has a release, so a new Talos
-patch release gets built on the following Monday.
-
-Add or remove boards in the `matrix.board` list. Add extensions in `env.EXTENSIONS`,
-using official extension names such as `drbd` or `iscsi-tools`. The script pins
-them to the digests published for that Talos version.
+`containers.yaml` builds `ghcr.io/s-collison/scrypted-rk3566` and
+`ghcr.io/s-collison/ffmpeg-v4l2request` (FFmpeg 8.1 + V4L2 Request hwaccel).
 
 ## First install (simplest bare-metal path)
 
@@ -81,18 +78,11 @@ for Rockchip boards. Upgrades keep whatever boot loader is already on the disk.
    this overlay.
 3. The RK3566 boot ROM can't boot NVMe directly. Keep Talos on eMMC/SD and give the M.2 SSD to storage.
 
-## Network boot (later)
+## Network boot
 
-- The boot ROM can't do PXE. U-Boot can (Ethernet is enabled in all five
-  defconfigs), but U-Boot has to come from SPI, eMMC or SD first.
-- **Quartz64 A**: U-Boot builds `u-boot-rockchip-spi.bin`, shipped in the overlay
-  under `artifacts/arm64/u-boot/quartz64-a/`. With it on the SPI flash, the board
-  could boot entirely from the network.
-- **SOQuartz**: no SPI flash in U-Boot, so U-Boot stays on eMMC/SD. Netbooting only
-  saves you reflashing the OS, not the boot loader.
-- A PXE install still has to finish by writing to the boot disk with the board
-  installer, and it hits the same GRUB vs systemd-boot install-mode issue above.
-  That's why direct flashing is the recommended path for now.
+U-Boot on every board has PXE. Local disks are tried first, then the network.
+CI publishes a TFTP tree per flavor (`netboot-<talos>-<flavor>.tar.gz`). See
+[netboot.md](netboot.md) for the Pi Zero setup and the PXE → holzkube → install flow.
 
 ## M.2 SSD with DRBD / LINSTOR (Piraeus)
 

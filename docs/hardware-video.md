@@ -1,7 +1,7 @@
 # Hardware video (MPP / RKMPP) on Talos: what's possible
 
-**Short version: Rockchip MPP cannot run on Talos.** Neither `/dev/mpp_service`
-nor `h264_rkmpp` / `hevc_rkmpp` will exist on these nodes.
+**Short version: Rockchip MPP (BSP) cannot run on Talos, but the mainline Hantro
+decoder can, and this repo builds it as the `media` flavor (below).**
 
 ## Why
 
@@ -20,12 +20,34 @@ nor `h264_rkmpp` / `hevc_rkmpp` will exist on these nodes.
 What *is* enabled: `DRM_ROCKCHIP` (display), `DRM_PANFROST` (Mali GPU),
 `DMABUF_HEAPS_SYSTEM`, and all the storage, network and PMIC drivers these boards need.
 
-## Options
+## What this repo provides: the `media` flavor (mainline)
+
+- **Kernel:** Talos's own kernel config plus `kernel/media.config`. That enables
+  `hantro_vpu` (rk3568-vpu: H.264 / VP8 / MPEG-2 decode; rk3568-vepu: JPEG encode) and
+  `rockchip_rga` (scaling / colour conversion). The device-tree nodes are enabled by
+  default on all five boards. Built by `.github/workflows/media-kernel.yaml` together
+  with `installer-base`, `imager` and a re-signed `drbd`.
+- **Images:** `talos-<ver>-<board>-media.raw.xz`, `talos-installer-<board>-media:<ver>`
+  and `netboot-<ver>-media.tar.gz`.
+- **Node config:** `talos/patches/media.yaml` loads the modules and labels the node
+  `quartz64.dev/video-decode=hantro`.
+- **Userspace:** `ghcr.io/s-collison/scrypted-rk3566` (Scrypted +
+  `/opt/ffmpeg-v4l2request/bin/ffmpeg`) and `ghcr.io/s-collison/ffmpeg-v4l2request`.
+  FFmpeg is Kwiboo's `v4l2-request-n8.1` (FFmpeg 8.1 with the V4L2 Request hwaccels that
+  are pending upstream). Example Deployment: `talos/examples/scrypted-media.yaml`.
+  Decoder args in Scrypted: `-hwaccel v4l2request -hwaccel_output_format drm_prime`.
+- **Check on a node:** `talosctl -n <ip> ls /dev | grep -E 'video|media'`, then in the
+  pod `ffmpeg -hide_banner -hwaccels` lists `v4l2request`.
+
+Limits: decode only. No HEVC/VP9 (no rkvdec on RK356x upstream) and no H.264 encode. For
+re-encode/transcode, Scrypted falls back to software (libx264 is included).
+
+## Other options
+
 
 | option | effort | result |
 |---|---|---|
 | **Software ffmpeg in Scrypted** on a Quartz64 / Pi 5 node | none | Fine for rebroadcast (no transcode). Motion/object detection on a few low-res substreams works; many cameras won't |
-| **Custom Talos kernel** (fork siderolabs/pkgs, enable HANTRO/VDEC/RGA, build your own installer-base + imager inputs; rebuild drbd for that kernel) | high, ongoing per Talos release | V4L2 *decode* only, via an ffmpeg with v4l2-request patches. Still no hardware encode |
 | **One RK3566 board off Talos** running a vendor-kernel distro (Armbian vendor / Ubuntu Rockchip) with libmpp + ffmpeg-rockchip, running Scrypted directly | medium | Full MPP encode/decode. That board isn't Talos-managed |
 | **Intel N100/N150 mini-PC as a Talos worker** + official `i915` extension | low (hardware cost) | Quick Sync decode/encode for Scrypted *and* Plex, inside the cluster |
 

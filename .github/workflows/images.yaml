@@ -1,14 +1,10 @@
-# Builds the overlay, then Talos images + upgrade installers for each board,
+# Builds the overlay, then for each flavor (stock, media):
+#   - Talos SD/eMMC images + upgrade installers for each board
+#   - one netboot (PXE/TFTP) tree for U-Boot
 # and publishes a GitHub Release.
 #
-# Triggers:
-#   - tag v*                 -> release for the current Talos (or the input)
-#   - weekly schedule        -> builds the latest Talos release if it hasn't been released yet
-#   - manual (workflow_dispatch) with an optional Talos version
-#
-# Runs on GitHub's arm64 runners: U-Boot/TF-A build natively and the imager
-# runs natively. Free for public repos; in private repos it uses your plan's
-# free minutes.
+# Triggers: tag v* | weekly (latest Talos, skipped if already released) | manual.
+# Runs on GitHub's arm64 runners (free for public repos; plan minutes for private).
 name: images
 on:
   push:
@@ -20,6 +16,9 @@ on:
       talos_version:
         description: "Talos version (e.g. v1.14.5). Empty = latest release"
         required: false
+      flavors:
+        description: "Flavors to build (JSON list): stock, media"
+        default: '["stock","media"]'
       force:
         description: "Rebuild even if a release for this version already exists"
         type: boolean
@@ -35,8 +34,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  # Official extensions baked into every image. drbd: for Piraeus/LINSTOR on the M.2 SSD.
-  EXTENSIONS: "drbd"
+  BOARDS: '["quartz64-a","soquartz-blade","soquartz-model-a"]'
 
 jobs:
   resolve:
@@ -48,6 +46,9 @@ jobs:
       release_tag: ${{ steps.v.outputs.release_tag }}
       skip: ${{ steps.v.outputs.skip }}
       owner: ${{ steps.v.outputs.owner }}
+      flavors: ${{ steps.v.outputs.flavors }}
+      media: ${{ steps.v.outputs.media }}
+      boards: ${{ steps.v.outputs.boards }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -56,26 +57,35 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUT: ${{ inputs.talos_version }}
           FORCE: ${{ inputs.force }}
+          FLAVORS: ${{ inputs.flavors || '["stock","media"]' }}
         run: |
           set -euo pipefail
           talos="${INPUT:-$(gh api repos/siderolabs/talos/releases/latest --jq .tag_name)}"
           # The Talos Makefile pins the pkgs (kernel) build for that release.
           pkgs="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/talos/${talos}/Makefile" \
-                         | sed -nE 's/^PKGS \?= *(.*)$/\1/p' | head -n1)"
+                  | sed -nE 's/^PKGS \?= *(.*)$/\1/p' | head -n1)"
           [ -n "${pkgs}" ] || { echo "could not find PKGS for ${talos}"; exit 1; }
           src="$(git describe --tag --always --match 'v[0-9]*')"
-          overlay_tag="${src}-${talos}"
-          release_tag="talos-${talos}-${src}"
           skip=false
           if [ "${GITHUB_EVENT_NAME}" = schedule ] || { [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${FORCE}" != true ]; }; then
-            gh release view "${release_tag}" >/dev/null 2>&1 && skip=true
+            gh release view "talos-${talos}-${src}" >/dev/null 2>&1 && skip=true
           fi
-          owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          media=false; echo "${FLAVORS}" | grep -q '"media"' && media=true
           {
             echo "talos=${talos}"; echo "pkgs=${pkgs}"
-            echo "overlay_tag=${overlay_tag}"; echo "release_tag=${release_tag}"
-            echo "skip=${skip}"; echo "owner=${owner}"
+            echo "overlay_tag=${src}-${talos}"; echo "release_tag=talos-${talos}-${src}"
+            echo "skip=${skip}"; echo "owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+            echo "flavors=${FLAVORS}"; echo "media=${media}"; echo "boards=${BOARDS}"
           } | tee -a "$GITHUB_OUTPUT"
+
+  media-kernel:
+    needs: resolve
+    if: needs.resolve.outputs.skip != 'true' && needs.resolve.outputs.media == 'true'
+    uses: ./.github/workflows/media-kernel.yaml
+    with:
+      talos: ${{ needs.resolve.outputs.talos }}
+      pkgs: ${{ needs.resolve.outputs.pkgs }}
+    secrets: inherit
 
   overlay:
     needs: resolve
@@ -88,10 +98,7 @@ jobs:
       - uses: docker/setup-qemu-action@v3      # amd64 half of the overlay (installer binaries only)
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        with: { registry: "${{ env.REGISTRY }}", username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - name: Build and push overlay
         run: |
           make docker-sbc-quartz \
@@ -100,39 +107,53 @@ jobs:
             TARGET_ARGS="--tag=${REGISTRY}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }} --push=true"
 
   images:
-    needs: [resolve, overlay]
+    needs: [resolve, overlay, media-kernel]
+    # run even when media-kernel was skipped (stock-only builds)
+    if: always() && needs.resolve.outputs.skip != 'true' && needs.overlay.result == 'success' && (needs.media-kernel.result == 'success' || needs.media-kernel.result == 'skipped')
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        board: [quartz64-a, soquartz-blade, soquartz-model-a]
+        flavor: ${{ fromJSON(needs.resolve.outputs.flavors) }}
+        board: ${{ fromJSON(needs.resolve.outputs.boards) }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        with: { registry: "${{ env.REGISTRY }}", username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - name: Build, verify, push installer
         env:
           TALOS_VERSION: ${{ needs.resolve.outputs.talos }}
+          FLAVOR: ${{ matrix.flavor }}
           OVERLAY_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }}
           INSTALLER_REPO: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-installer
-        run: hack/build-image.sh "${{ matrix.board }}"
-      - name: Checksum
-        run: cd _out && sha256sum talos-*.raw.xz > "talos-${{ needs.resolve.outputs.talos }}-${{ matrix.board }}.raw.xz.sha256"
+          OWNER: ${{ needs.resolve.outputs.owner }}
+        run: |
+          if [ "${FLAVOR}" = media ]; then
+            export IMAGER_IMAGE=${REGISTRY}/${OWNER}/talos-media/imager:${TALOS_VERSION}
+            export BASE_INSTALLER_IMAGE=${REGISTRY}/${OWNER}/talos-media/installer-base:${TALOS_VERSION}
+            export EXTENSION_IMAGES=${REGISTRY}/${OWNER}/talos-media/drbd:${TALOS_VERSION}
+          else
+            export EXTENSIONS=drbd
+          fi
+          # netboot assets once per flavor (kernel/initramfs are board-independent)
+          [ "${{ matrix.board }}" = quartz64-a ] && export NETBOOT=1
+          hack/build-image.sh "${{ matrix.board }}"
+      - name: Checksums
+        run: cd _out && for f in *.raw.xz *.tar.gz; do [ -e "$f" ] && sha256sum "$f" > "$f.sha256"; done; ls -la
       - uses: actions/upload-artifact@v4
         with:
-          name: image-${{ matrix.board }}
+          name: image-${{ matrix.flavor }}-${{ matrix.board }}
           path: |
-            _out/talos-*.raw.xz
-            _out/talos-*.sha256
+            _out/*.raw.xz
+            _out/*.tar.gz
+            _out/*.sha256
           retention-days: 7
 
   release:
     needs: [resolve, images]
+    if: always() && needs.images.result == 'success'
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/download-artifact@v4
@@ -142,15 +163,16 @@ jobs:
           o=${{ needs.resolve.outputs.owner }}; t=${{ needs.resolve.outputs.talos }}
           cat > notes.md <<NOTES
           Talos **${t}** for Pine64 RK3566 boards. Overlay \`${REGISTRY}/${o}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }}\`,
-          DTBs from siderolabs/pkgs \`${{ needs.resolve.outputs.pkgs }}\`. Extensions: \`${EXTENSIONS}\`.
+          kernel pkgs \`${{ needs.resolve.outputs.pkgs }}\` (media flavor: same + Hantro/RGA, \`${REGISTRY}/${o}/talos-media/*\`).
 
-          | board | SD/eMMC image | upgrade installer |
-          |---|---|---|
-          | Quartz64 Model A | \`talos-${t}-quartz64-a.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-quartz64-a:${t}\` |
-          | SOQuartz + Blade | \`talos-${t}-soquartz-blade.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-soquartz-blade:${t}\` |
-          | SOQuartz + Model-A baseboard | \`talos-${t}-soquartz-model-a.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-soquartz-model-a:${t}\` |
+          | board | stock image | media image (Hantro decode) | upgrade installers |
+          |---|---|---|---|
+          | Quartz64 Model A | \`talos-${t}-quartz64-a.raw.xz\` | \`talos-${t}-quartz64-a-media.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-quartz64-a[-media]:${t}\` |
+          | SOQuartz + Blade | \`talos-${t}-soquartz-blade.raw.xz\` | \`talos-${t}-soquartz-blade-media.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-soquartz-blade[-media]:${t}\` |
+          | SOQuartz + Model-A | \`talos-${t}-soquartz-model-a.raw.xz\` | \`talos-${t}-soquartz-model-a-media.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-soquartz-model-a[-media]:${t}\` |
 
-          Flash: \`xz -dc talos-${t}-<board>.raw.xz | sudo dd of=/dev/rdiskN bs=4m\`. Serial console: UART2, 1500000 8N1.
+          Netboot (U-Boot PXE): \`netboot-${t}-<flavor>.tar.gz\`, unpack into the TFTP root (see docs/netboot.md).
+          Flash: \`xz -dc <image> | sudo dd of=/dev/rdiskN bs=4m\`. Serial: UART2, 1500000 8N1.
           NOTES
       - uses: softprops/action-gh-release@v2
         with:
