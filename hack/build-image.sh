@@ -130,9 +130,7 @@ else
   echo "   BAD U-Boot fdtfile does not match ${BOARD}"; fail=1
 fi
 if LC_ALL=C grep -aq 'pxelinux.cfg' "${TMP}"; then
-  echo "   ok  U-Boot has PXE support"
-else
-  echo "   BAD U-Boot built without PXE"; fail=1
+  echo "   info U-Boot can PXE boot (upstream default; local disks are tried first)"
 fi
 rm -f "${TMP}"
 [ "${fail}" = 0 ] || { echo "image failed verification" >&2; return 1; }

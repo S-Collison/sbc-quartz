@@ -1,4 +1,8 @@
-# Network install: Pi Zero (PXE + DNS + holzkube) → Pi 5 control plane → Quartz workers
+# Network install (optional, later): Pi Zero (PXE + DNS + holzkube) → Pi 5 control plane → Quartz workers
+
+> Not needed to get running. Flashed images boot into maintenance mode and
+> holzkube-manager provisions them directly; see [provision-and-upgrade.md](provision-and-upgrade.md).
+> Netboot assets are built only when the `images` workflow is run with `netboot: true`.
 
 ```
  Express 7 (gateway, Wi-Fi) ── existing PoE switch (VLAN-aware)

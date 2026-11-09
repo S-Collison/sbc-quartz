@@ -103,30 +103,17 @@ The images already contain the `drbd` extension and `drbd.yaml` loads it.
 
 ## Upgrades
 
-Manual:
-
-```sh
-talosctl -n <ip> upgrade --image ghcr.io/s-collison/talos-installer-soquartz-blade:v1.14.6
-```
-
-Automatic, GitOps-style, the nearest thing to the old CoreOS update agent (Omaha/Nebraska):
-
-- install tuppr: `helm install tuppr oci://ghcr.io/home-operations/charts/tuppr -n system-upgrade --create-namespace`
-- apply `talos/patches/tuppr.yaml` to every node
-- apply `talos/tuppr/upgrades.yaml`, then bump `spec.talos.version` once CI has
-  published installers for that version. Renovate can open that PR for you.
-
-Each board's installer image differs only by repository, and its tag is the
-Talos version. Check how your tuppr release chooses the image (keep each node's
-`machine.install.image` repository and change the tag, or set it per node
-group). Never let it fall back to the stock installer: that drops this overlay.
+See [provision-and-upgrade.md](provision-and-upgrade.md). In short: tuppr upgrades
+every node to `<its install image repository>:<version>`, which suits the board
+installers CI publishes. holzkube-manager provisions nodes, but don't use it to upgrade
+the Quartz/SOQuartz nodes, because its upgrades come from the Image Factory.
 
 ## Fleet managers / GUIs (free options)
 
 | tool | cost / license | GUI | works with these boards? |
 |---|---|---|---|
 | **tuppr** | free, AGPL-3.0 | no (kubectl/GitOps) | yes; upgrades are driven by version, which our installer tags support |
-| **holzkube-manager** | free, AGPL-3.0, alpha (0.8) | yes, web + mobile | runs outside the cluster on any arm64 box; talks to the Talos API. Custom installer images aren't documented, so test upgrades on one node |
+| **holzkube-manager** | free, AGPL-3.0, alpha (0.8) | yes, web + mobile | runs outside the cluster (Pi Zero). Use it for provisioning/config; its upgrades go through the Image Factory, so not for these boards |
 | **Omni (self-hosted)** | free for home lab / non-production under BSL; hosted Hobby is paid | yes | builds images and installers through Image Factory, which doesn't have this overlay, so its upgrades would fight these boards |
 | Kamaji | free | no | runs hosted control planes; not an OS fleet or upgrade manager |
 | Headlamp | free | yes | Kubernetes GUI only (workloads), no Talos upgrades |

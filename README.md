@@ -36,11 +36,17 @@ TALOS_VERSION=v1.14.5 hack/build-image.sh quartz64-a
 
 Output: `_out/talos-<version>-<board>.raw.xz`.
 
-## Flavors and netboot
+## Getting a cluster up
+
+Flash a release image, boot into maintenance mode, assign configs with
+holzkube-manager (or talosctl), and upgrade with tuppr:
+[docs/provision-and-upgrade.md](docs/provision-and-upgrade.md).
+
+## Flavors and netboot (optional)
 
 - `stock`: Talos kernel as released. `media`: the same kernel plus Hantro/RGA for
   hardware video decode ([docs/hardware-video.md](docs/hardware-video.md)).
-- U-Boot tries local disks first, then PXE. A Pi Zero running dnsmasq serves the
+- Optional, later: U-Boot tries local disks first, then PXE. A Pi Zero running dnsmasq serves the
   `netboot-<talos>-<flavor>.tar.gz` tree, and nodes are provisioned from maintenance
   mode with holzkube-manager or talosctl ([docs/netboot.md](docs/netboot.md)).
 

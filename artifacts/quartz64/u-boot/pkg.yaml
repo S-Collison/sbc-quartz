@@ -39,19 +39,10 @@ steps:
             # Host tools: image signing needs the OpenSSL ENGINE API (gone from the toolchain's
             # OpenSSL) and mkeficapsule needs gnutls; neither is used for Rockchip boot images.
             ./scripts/config --file ${out}/.config --disable TOOLS_LIBCRYPTO --disable TOOLS_KWBIMAGE --disable TOOLS_MKEFICAPSULE
-            # Network boot (PXE/extlinux over TFTP). Rockchip's default boot order is
-            # "mmc1 mmc0 nvme scsi usb pxe dhcp spi", so local disks win and PXE is the
-            # fallback for blank nodes. booti boots the raw Image (no EFI), so a PXE
-            # install of Talos writes GRUB like the flashed images.
-            ./scripts/config --file ${out}/.config \
-              --enable NET --enable CMD_NET --enable CMD_DHCP --enable CMD_TFTPBOOT --enable CMD_PXE \
-              --enable BOOTMETH_EXTLINUX_PXE --enable CMD_BOOTI --enable DWC_ETH_QOS --enable DWC_ETH_QOS_ROCKCHIP
             make O=${out} olddefconfig
             make O=${out} -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" BL31="${BL31}" ROCKCHIP_TPL="${TPL}"
           fi
           test -s ${out}/u-boot-rockchip.bin
-          grep -q '^CONFIG_CMD_PXE=y' ${out}/.config || { echo "PXE not enabled for ${defconfig}"; exit 1; }
-          grep -q '^CONFIG_BOOTMETH_EXTLINUX_PXE=y' ${out}/.config || { echo "PXE bootmeth not enabled for ${defconfig}"; exit 1; }
         done
     install:
       - |

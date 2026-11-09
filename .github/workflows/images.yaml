@@ -1,6 +1,6 @@
-# Builds the overlay, then for each flavor (stock, media):
-#   - Talos SD/eMMC images + upgrade installers for each board
-#   - one netboot (PXE/TFTP) tree for U-Boot
+# Builds the overlay, then Talos SD/eMMC images + upgrade installers for each
+# board. Default flavor: stock. Optional (manual run): "media" flavor (Hantro
+# kernel) and a netboot (PXE/TFTP) tree.
 # and publishes a GitHub Release.
 #
 # Triggers: tag v* | weekly (latest Talos, skipped if already released) | manual.
@@ -17,8 +17,12 @@ on:
         description: "Talos version (e.g. v1.14.5). Empty = latest release"
         required: false
       flavors:
-        description: "Flavors to build (JSON list): stock, media"
-        default: '["stock","media"]'
+        description: 'Flavors (JSON list). "media" = Hantro kernel, first build takes hours'
+        default: '["stock"]'
+      netboot:
+        description: "Also build the PXE/TFTP netboot tree (optional)"
+        type: boolean
+        default: false
       force:
         description: "Rebuild even if a release for this version already exists"
         type: boolean
@@ -57,7 +61,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUT: ${{ inputs.talos_version }}
           FORCE: ${{ inputs.force }}
-          FLAVORS: ${{ inputs.flavors || '["stock","media"]' }}
+          FLAVORS: ${{ inputs.flavors || '["stock"]' }}
         run: |
           set -euo pipefail
           talos="${INPUT:-$(gh api repos/siderolabs/talos/releases/latest --jq .tag_name)}"
@@ -137,8 +141,8 @@ jobs:
           else
             export EXTENSIONS=drbd
           fi
-          # netboot assets once per flavor (kernel/initramfs are board-independent)
-          [ "${{ matrix.board }}" = quartz64-a ] && export NETBOOT=1
+          # optional netboot assets, once per flavor (kernel/initramfs are board-independent)
+          if [ "${{ inputs.netboot }}" = true ] && [ "${{ matrix.board }}" = quartz64-a ]; then export NETBOOT=1; fi
           hack/build-image.sh "${{ matrix.board }}"
       - name: Checksums
         run: cd _out && for f in *.raw.xz *.tar.gz; do [ -e "$f" ] && sha256sum "$f" > "$f.sha256"; done; ls -la
