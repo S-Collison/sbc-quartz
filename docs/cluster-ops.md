@@ -36,7 +36,7 @@ images under `ghcr.io/s-collison/talos-media/*`). Media nodes also get
 
 | reads | writes |
 |---|---|
-| latest siderolabs/talos release, its Makefile `PKGS` | `talos.env`, `Makefile`, `.kres.yaml`, `talos/patches/install-*.yaml`, `talos/tuppr/upgrades.yaml` |
+| latest siderolabs/talos release, its Makefile `PKGS` | `Makefile`/`.kres.yaml` `PKGS` default (local builds), `talos/patches/install-*.yaml`, `talos/tuppr/upgrades.yaml` |
 | latest siderolabs/sbc-rockchip release: Pkgfile, Makefile, installer go.mod/go.sum | `Pkgfile` (U-Boot, TF-A, rkbin + checksums, bldr), `TOOLS`, `installers/quartz64/src/go.{mod,sum}`, `go.work` |
 
 It also moves `FFMPEG_REF` in `containers/ffmpeg-v4l2request/Dockerfile` to the head of
@@ -51,8 +51,8 @@ must pass:
 
 Then, in the same run (and on every merge to `main` that touches build inputs):
 
-- **tag**: tags are named after the Talos version in `talos.env`. No tag for it yet →
-  `vX.Y.Z`. Build inputs changed since the newest `vX.Y.Z[-rN]` → `vX.Y.Z-r(N+1)`.
+- **tag**: the tag is the version. Latest upstream Talos has no tag here yet →
+  tag `main` `vX.Y.Z` (daily run only, after the pins built). Build inputs changed since the newest `vX.Y.Z[-rN]` → `vX.Y.Z-r(N+1)`.
   Otherwise nothing. The new tag is pushed and `images.yaml` is dispatched on it.
 - **containers**: `media-containers.yaml` is dispatched if `containers/` changed since the
   commit recorded in the published image's labels, or the Scrypted/Debian base digest moved.
@@ -60,8 +60,9 @@ Then, in the same run (and on every merge to `main` that touches build inputs):
 Installers are pushed as `talos-installer-<board>[-media]:<talos>` (what tuppr upgrades
 to; a `-rN` rebuild replaces it) and the release assets stay on each tag.
 
-To hold an older Talos, edit `talos.env` by hand and disable the track workflow
-(Actions → track → ⋯ → Disable), otherwise the next run moves it forward again.
+To build an older Talos, push a tag for it yourself (`git tag -a v1.14.4 -m v1.14.4 && git push
+origin v1.14.4`); the build reads the version from the tag. To stop new versions arriving,
+disable the track workflow (Actions → track → ⋯ → Disable).
 
 ### Building (`images.yaml`)
 
@@ -69,8 +70,8 @@ Runs on a `v*` tag (created by track, or pushed by you) or by hand. Failures on 
 open/comment an issue labelled `build-failure`. Run by hand on a branch, it builds and
 uploads 7-day workflow artifacts without a release. It:
 
-1. reads the Talos version and kernel build (`PKGS`) from `talos.env` (a manual run
-   may override the version);
+1. takes the Talos version from the tag (`v1.14.5-r2` → Talos v1.14.5) and the kernel build
+   (`PKGS`) from that Talos release's Makefile;
 2. builds the media kernel stack if it's missing (`media-kernel.yaml`), and the overlay
    `ghcr.io/s-collison/sbc-quartz:<tag>` (e.g. `v1.14.5-r1`);
 3. for each flavor × board (`quartz64-a`, `soquartz-blade`, `soquartz-model-a`):

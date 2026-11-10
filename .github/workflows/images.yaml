@@ -5,10 +5,12 @@
 # and publishes a GitHub Release named after the git tag. A media failure never
 # blocks the stock images.
 #
-# Tags follow upstream Talos: v1.14.5 is the first build for Talos v1.14.5,
-# v1.14.5-r1, -r2 ... are rebuilds of the same Talos with fixes from this repo.
+# The tag is the version (no version file): v1.14.5 builds Talos v1.14.5 with the
+# kernel pkgs that Talos release pins; v1.14.5-r1, -r2 ... are rebuilds of the
+# same Talos with fixes from this repo.
 # track.yaml creates those tags and dispatches this workflow on them, so a
 # normal run needs no human. Pushing a v* tag by hand works the same way.
+# Every tag run builds, even if the release already exists (its assets are replaced).
 # Running it by hand on a branch builds and uploads workflow artifacts (7 days)
 # without publishing a release.
 name: images
@@ -18,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       talos_version:
-        description: "Talos version override. Empty = talos.env at this ref (normal)"
+        description: "Branch runs only: Talos version (empty = latest release). Tag runs use the tag"
         required: false
       media:
         description: "Also build the media (Hantro) flavor. First run builds the kernel: several hours"
@@ -26,10 +28,6 @@ on:
         default: true
       netboot:
         description: "Also build the PXE/TFTP netboot tree"
-        type: boolean
-        default: false
-      force:
-        description: "Rebuild even if this tag already has a release"
         type: boolean
         default: false
 
@@ -54,7 +52,6 @@ jobs:
       pkgs: ${{ steps.v.outputs.pkgs }}
       overlay_tag: ${{ steps.v.outputs.overlay_tag }}
       release_tag: ${{ steps.v.outputs.release_tag }}
-      skip: ${{ steps.v.outputs.skip }}
       owner: ${{ steps.v.outputs.owner }}
       media: ${{ steps.v.outputs.media }}
       netboot: ${{ steps.v.outputs.netboot }}
@@ -65,42 +62,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT: ${{ inputs.talos_version }}
-          FORCE: ${{ inputs.force }}
           MEDIA: ${{ github.event_name == 'workflow_dispatch' && inputs.media || github.event_name != 'workflow_dispatch' }}
           NETBOOT: ${{ github.event_name == 'workflow_dispatch' && inputs.netboot }}
         run: |
           set -euo pipefail
-          . ./talos.env
-          talos="${INPUT:-${TALOS_VERSION}}"
-          if [ "${talos}" = "${TALOS_VERSION}" ]; then
-            pkgs="${PKGS}"
-          else
-            # older release requested by hand: use the kernel pkgs that release pinned
-            pkgs="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/talos/${talos}/Makefile" \
-                    | sed -nE 's/^PKGS \?= *(.*)$/\1/p' | head -n1)"
-          fi
-          [ -n "${pkgs}" ] || { echo "::error::could not find PKGS for ${talos}"; exit 1; }
-          release_tag=""; skip=false
+          # The tag is the version: v1.14.5 and v1.14.5-rN both build Talos v1.14.5.
+          release_tag=""
           if [ "${GITHUB_REF_TYPE}" = tag ]; then
             release_tag="${GITHUB_REF_NAME}"; overlay_tag="${GITHUB_REF_NAME}"
-            case "${release_tag}" in
-              "${talos}"|"${talos}"-r[0-9]*) ;;
-              *) [ -n "${INPUT}" ] || { echo "::error::tag ${release_tag} doesn't match talos.env ${talos}"; exit 1; } ;;
-            esac
-            if [ "${FORCE}" != true ] && gh release view "${release_tag}" >/dev/null 2>&1; then skip=true; fi
+            talos="${GITHUB_REF_NAME%-r[0-9]*}"
           else
+            talos="${INPUT:-$(gh api repos/siderolabs/talos/releases/latest --jq .tag_name)}"
             overlay_tag="${talos}-$(git rev-parse --short HEAD)"
           fi
+          [[ "${talos}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::'${talos}' is not a Talos version (tags must be vX.Y.Z or vX.Y.Z-rN)"; exit 1; }
+          # kernel build (DTBs, media kernel base) pinned by that Talos release
+          pkgs="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/talos/${talos}/Makefile" \
+                  | sed -nE 's/^PKGS \?= *(.*)$/\1/p' | head -n1)"
+          [ -n "${pkgs}" ] || { echo "::error::could not find PKGS in the Talos ${talos} Makefile"; exit 1; }
           {
             echo "talos=${talos}"; echo "pkgs=${pkgs}"
             echo "overlay_tag=${overlay_tag}"; echo "release_tag=${release_tag}"
-            echo "skip=${skip}"; echo "owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+            echo "owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
             echo "media=${MEDIA}"; echo "netboot=${NETBOOT:-false}"
           } | tee -a "$GITHUB_OUTPUT"
 
   overlay:
     needs: resolve
-    if: needs.resolve.outputs.skip != 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     steps:
@@ -119,7 +107,7 @@ jobs:
 
   media-kernel:
     needs: resolve
-    if: needs.resolve.outputs.skip != 'true' && needs.resolve.outputs.media == 'true'
+    if: needs.resolve.outputs.media == 'true'
     uses: ./.github/workflows/media-kernel.yaml
     with:
       talos: ${{ needs.resolve.outputs.talos }}
@@ -286,6 +274,8 @@ jobs:
           name: ${{ needs.resolve.outputs.release_tag }} (Talos ${{ needs.resolve.outputs.talos }})
           body_path: notes.md
           files: dist/*
+          # a tag always rebuilds; replace the assets of an existing release
+          overwrite_files: true
 
   # Unattended runs (push/dispatch from track.yaml) report failures as an issue
   # instead of relying on someone reading the Actions tab. The media flavor is
