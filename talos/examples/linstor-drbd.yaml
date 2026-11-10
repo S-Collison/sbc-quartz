@@ -1,7 +1,6 @@
 # LINSTOR on the raw partition r-drbd from talos/patches/drbd-emmc.yaml (eMMC free space)
 # or talos/patches/drbd-sd.yaml (whole microSD); nodes can use either.
-# Needs Piraeus Operator v2 installed (and the Talos drbd-module-loader override
-# from the Piraeus "Talos" guide, see docs/cluster-ops.md).
+# Apply after talos/examples/piraeus-talos.yaml (docs/cluster-ops.md).
 #
 # The operator turns /dev/disk/by-partlabel/r-drbd into an LVM thin pool (pool name
 # "drbd") on every node labelled sbc-quartz.io/linstor=true, which both patches set.
@@ -34,8 +33,13 @@ reclaimPolicy: Delete
 parameters:
   linstor.csi.linbit.com/storagePool: drbd
   linstor.csi.linbit.com/placementCount: "2"
-  property.linstor.csi.linbit.com/DrbdOptions/Resource/quorum: majority
+  # LINSTOR sets quorum=majority itself (with a tie-breaker for 2 copies). These make a
+  # node that loses quorum pause I/O and step down cleanly instead of erroring, which
+  # the Piraeus HA controller expects for fast failover.
   property.linstor.csi.linbit.com/DrbdOptions/Resource/on-no-quorum: suspend-io
+  property.linstor.csi.linbit.com/DrbdOptions/Resource/on-no-data-accessible: suspend-io
+  property.linstor.csi.linbit.com/DrbdOptions/Resource/on-suspended-primary-outdated: force-secondary
+  property.linstor.csi.linbit.com/DrbdOptions/Net/rr-conflict: retry-connect
 ---
 # Three full copies: survives losing any two boards' data, costs 3 GiB per GiB.
 apiVersion: storage.k8s.io/v1
@@ -49,5 +53,10 @@ reclaimPolicy: Delete
 parameters:
   linstor.csi.linbit.com/storagePool: drbd
   linstor.csi.linbit.com/placementCount: "3"
-  property.linstor.csi.linbit.com/DrbdOptions/Resource/quorum: majority
+  # LINSTOR sets quorum=majority itself (with a tie-breaker for 2 copies). These make a
+  # node that loses quorum pause I/O and step down cleanly instead of erroring, which
+  # the Piraeus HA controller expects for fast failover.
   property.linstor.csi.linbit.com/DrbdOptions/Resource/on-no-quorum: suspend-io
+  property.linstor.csi.linbit.com/DrbdOptions/Resource/on-no-data-accessible: suspend-io
+  property.linstor.csi.linbit.com/DrbdOptions/Resource/on-suspended-primary-outdated: force-secondary
+  property.linstor.csi.linbit.com/DrbdOptions/Net/rr-conflict: retry-connect

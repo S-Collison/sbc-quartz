@@ -13,6 +13,9 @@
 # unchanged. Use high-endurance cards (e.g. Samsung PRO Endurance, SanDisk
 # High/Max Endurance), 64-256 GB, the same size on every node.
 #
+# The card must be empty (no old image/partitions), or Talos finds no free space:
+#   talosctl -n <ip> wipe disk mmcblk1      # check the name with: talosctl -n <ip> get disks
+#
 # Card died: replace it and reboot; Talos recreates r-drbd on the new card and the
 # Piraeus operator rebuilds the pool. Then let LINSTOR resync (docs/cluster-ops.md).
 # Check:  talosctl -n <ip> get disks ; talosctl -n <ip> get volumestatus

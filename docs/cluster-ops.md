@@ -160,18 +160,22 @@ nodes backed by cards.
 
 ### LINSTOR
 
-1. Install the operator:
+1. Every node that runs Piraeus needs `drbd.yaml` in its config: all storage workers, and
+   any node whose pods mount LINSTOR volumes. It loads DRBD and the LVM thin modules and
+   labels the node `sbc-quartz.io/drbd-module=true`; Piraeus runs only on those nodes.
+   (For the Pi 5, also add the `siderolabs/drbd` extension to its Image Factory schematic.)
+2. Install the operator:
 
    ```sh
    helm upgrade --install piraeus-op oci://ghcr.io/piraeusdatastore/piraeus-operator/piraeus \
      -n piraeus-datastore --create-namespace
    ```
 
-2. Apply the Talos module-loader override from the Piraeus "Talos" guide
-   (`LinstorSatelliteConfiguration` that removes the `drbd-module-loader` init
-   container), and create a `LinstorCluster`.
-3. `kubectl apply -f talos/examples/linstor-drbd.yaml`: pool `drbd` (LVM thin on `r-drbd`) on
-   every labelled node, and two StorageClasses:
+3. `kubectl apply -f talos/examples/piraeus-talos.yaml`: the `LinstorCluster`, plus the Talos
+   adjustments from the Piraeus Talos guide (no module loader or shutdown guard, no systemd
+   or kernel-header mounts, LVM metadata under `/var/etc/lvm` because `/etc` is read-only).
+4. `kubectl apply -f talos/examples/linstor-drbd.yaml`: pool `drbd` (LVM thin on `r-drbd`) on
+   every node labelled by stage 2, and two StorageClasses:
 
    | StorageClass | copies | space per GiB | survives |
    |---|---|---|---|
@@ -180,9 +184,35 @@ nodes backed by cards.
 
    With three workers at 150 GiB each that's about 225 GiB usable with r2 or 150 GiB with r3.
    Use r2 by default and r3 for data you can't rebuild. Nodes added to stage 2 later join the
-   pool by themselves.
-4. Check: `talosctl -n <ip> read /proc/modules | grep drbd` and
-   `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor storage-pool list`.
+   pool by themselves. Both classes pause I/O on a node that loses quorum rather than return
+   errors, which the Piraeus HA controller (on by default) uses to move the workload.
+
+### First node: check each step before doing the others
+
+These parts are configured but haven't been run on these boards yet.
+
+| after | check | expect |
+|---|---|---|
+| boot, before config | `talosctl get volumestatus --insecure -n <ip>` | EPHEMERAL not provisioned yet (waiting for config) |
+| first config | `talosctl -n <ip> get volumestatus` and `get discoveredvolumes` | EPHEMERAL ≈48 GiB, rest of the eMMC free |
+| first config | `talosctl -n <ip> read /sys/module/drbd/parameters/usermode_helper` | `disabled` |
+| first config | `talosctl -n <ip> read /proc/modules \| grep -E 'drbd\|dm_thin'` | `drbd`, `drbd_transport_tcp`, `dm_thin_pool` |
+| stage 2 patch | `talosctl -n <ip> get volumestatus` | `r-drbd` ready, without a reboot (reboot once if not) |
+| stage 2, SD | `talosctl -n <ip> get disks` | the card shows transport `mmc` and isn't the system disk |
+| Piraeus | `kubectl -n piraeus-datastore get pods -o wide` | a `linstor-satellite` per labelled node, Running |
+| pool | `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor storage-pool list` | `drbd` on the node, LVM_THIN, free space ≈ partition size |
+| volume | a test PVC on `linstor-r2` + a pod | Bound; `linstor resource list` shows 2 UpToDate + 1 TieBreaker |
+
+If holzkube won't accept a multi-document stored patch (`ephemeral-cap.yaml` is a separate
+`VolumeConfig` document), apply the first config with talosctl instead:
+`talosctl apply-config --insecure -n <ip> --file worker.yaml --config-patch @talos/patches/ephemeral-cap.yaml --config-patch @talos/patches/drbd.yaml`.
+
+### Backups
+
+Replicas aren't backups: a bad edit or a deletion reaches every copy at once. Keep configs in
+git, so the volume is a convenience copy. For data that isn't in git, take LINSTOR (CSI)
+snapshots and ship them to S3-compatible storage on the Pi 5 (e.g. MinIO on its SSD), off
+the workers that hold the replicas.
 
 **What goes where.** This pool is for small, slowly changing data: app configs, small
 databases, state that has to survive a node. Write volume is low, which also makes the SD
