@@ -60,8 +60,8 @@ Hands-off: one daily workflow, `track.yaml`, and you only act on failures.
 
 - It follows upstream: the latest Talos release and its kernel `PKGS`, the latest
   siderolabs/sbc-rockchip U-Boot/TF-A/rkbin/toolchain/Go deps, and the Kwiboo FFmpeg
-  branch. They are written to `talos.env` (the source of truth) and the build files,
-  the overlay is test-built, and the change is committed to `main`.
+  branch. Pins are written to the build files, the overlay is test-built, and the change
+  is committed to `main`. There is no version file: **the tag is the version**.
 - Releases are tagged after upstream Talos: **`v1.14.5`** is the first build for Talos
   v1.14.5; **`v1.14.5-r1`, `-r2`…** are rebuilds with fixes from this repo. A tag is created
   only when build inputs changed since the last one, and `images.yaml` then publishes the

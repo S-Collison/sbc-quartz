@@ -5,7 +5,7 @@
 #   hack/build-image.sh [board ...]          # default: quartz64-a soquartz-blade soquartz-model-a
 #
 # Env:
-#   TALOS_VERSION         Talos version (default v1.14.5)
+#   TALOS_VERSION         Talos version (default: from the newest vX.Y.Z[-rN] git tag)
 #   FLAVOR                stock | media (default stock). "media" = custom kernel with Hantro/RGA;
 #                         needs the images from .github/workflows/media-kernel.yaml
 #   OVERLAY_IMAGE         overlay from this repo (default ghcr.io/s-collison/sbc-quartz:$(git describe))
@@ -26,7 +26,9 @@
 set -euo pipefail
 
 if [ -z "${TALOS_VERSION:-}" ]; then
-  TALOS_VERSION="$(sed -nE 's/^TALOS_VERSION=//p' "$(dirname "$0")/../talos.env")"
+  t="$(git -C "$(dirname "$0")" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+  TALOS_VERSION="${t%-r[0-9]*}"
+  [ -n "${TALOS_VERSION}" ] || { echo "set TALOS_VERSION (no vX.Y.Z tag found)" >&2; exit 2; }
 fi
 FLAVOR="${FLAVOR:-stock}"
 TAG="$(git describe --tag --always --dirty --match 'v[0-9]*')"

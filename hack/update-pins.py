@@ -52,9 +52,6 @@ def main():
     ap.add_argument("--rockchip-gosum")
     a = ap.parse_args()
 
-    # talos.env
-    rw("talos.env", lambda t: sub1(r"^PKGS=.*$", f"PKGS={a.pkgs}",
-                                   sub1(r"^TALOS_VERSION=.*$", f"TALOS_VERSION={a.talos}", t, "talos.env"), "talos.env"))
     # Makefile / .kres.yaml PKGS defaults
     rw("Makefile", lambda t: sub1(r"^PKGS \?= .*$", f"PKGS ?= {a.pkgs}", t, "Makefile"))
     rw(".kres.yaml", lambda t: sub1(r"(- name: PKGS\n\s+defaultValue: ).*$", rf"\g<1>{a.pkgs}", t, ".kres.yaml"))
