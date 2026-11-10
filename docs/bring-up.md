@@ -57,7 +57,8 @@ Add these as stored patches in holzkube (from `talos/patches/`):
 | `registry-mirror.yaml` | all nodes |
 | `tuppr.yaml` | all nodes |
 | `rpi5-controlplane.yaml` | Pi 5 only, **first apply** |
-| `drbd.yaml` | workers that will run LINSTOR on the M.2 SSD |
+| `drbd.yaml` | workers that will run LINSTOR (eMMC partition and/or M.2 SSD) |
+| `emmc-drbd.yaml` | Quartz/SOQuartz workers, **first apply**: caps `/var` at 48 GiB, 150 GiB eMMC partition for LINSTOR |
 | `media.yaml` | only nodes installed from the `-media` images |
 
 ## 3. Pi 5: control plane

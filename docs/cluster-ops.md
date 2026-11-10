@@ -120,22 +120,51 @@ U-Boot on every board has PXE. Local disks are tried first, then the network.
 CI publishes a TFTP tree per flavor (`netboot-<talos>-<flavor>.tar.gz`). See
 [netboot.md](netboot.md) for the management node setup and the PXE → holzkube → install flow.
 
-## M.2 SSD with DRBD / LINSTOR (Piraeus)
+## DRBD / LINSTOR (Piraeus): eMMC partition and/or M.2 SSD
 
-The images already contain the `drbd` extension and `drbd.yaml` loads it.
+The images already contain the `drbd` extension and `drbd.yaml` loads it. Storage for
+LINSTOR comes from either place, or both, as separate pools:
 
-1. Leave the NVMe disk out of Talos volumes (no `UserVolumeConfig` on it), so LINSTOR can take it.
-2. Install the operator:
+**A partition of the boot eMMC.** The Talos image is about 1 GB, so most of a 256 GB eMMC
+is free. Add `talos/patches/emmc-drbd.yaml` to the node's **first** config (holzkube stored
+patch): EPHEMERAL (`/var`) is capped at 48 GiB, a 150 GiB raw partition
+`/dev/disk/by-partlabel/r-drbd` is created for LINSTOR, and the rest stays unallocated for a
+second partition later. This is configuration only; the images are unchanged. Applying it to
+an already-installed node only creates `r-drbd` if there is free space. EPHEMERAL never
+shrinks, so wipe it first (the command is in the patch).
+
+**An M.2 SSD.** Leave the NVMe disk out of Talos volumes (no `UserVolumeConfig` on it), so
+LINSTOR can take the whole disk (`/dev/nvme0n1`).
+
+Then:
+
+1. Install the operator:
 
    ```sh
    helm upgrade --install piraeus-op oci://ghcr.io/piraeusdatastore/piraeus-operator/piraeus \
      -n piraeus-datastore --create-namespace
    ```
 
-3. Apply the Talos module-loader override from the Piraeus "Talos" guide
+2. Apply the Talos module-loader override from the Piraeus "Talos" guide
    (`LinstorSatelliteConfiguration` that removes the `drbd-module-loader` init
-   container). Then create a `LinstorCluster` and a storage pool on `/dev/nvme0n1`.
-4. Check: `talosctl -n <ip> read /proc/modules | grep drbd`.
+   container), and create a `LinstorCluster`.
+3. eMMC pool: label the nodes and apply the example:
+   `kubectl label node <node> sbc-quartz.io/drbd=emmc` and
+   `kubectl apply -f talos/examples/linstor-emmc.yaml`. It creates the LVM thin pool on
+   `r-drbd` and two StorageClasses:
+
+   | StorageClass | copies | space per GiB | survives |
+   |---|---|---|---|
+   | `linstor-emmc-r2` | 2 + diskless tie-breaker | 2 GiB | one board down |
+   | `linstor-emmc-r3` | 3 | 3 GiB | two boards' disks lost |
+
+   With three Quartz/SOQuartz workers at 150 GiB each that's about 225 GiB usable with r2
+   or 150 GiB with r3. Use r2 by default and r3 for data you can't rebuild.
+4. Check: `talosctl -n <ip> read /proc/modules | grep drbd` and
+   `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor storage-pool list`.
+
+eMMC has less write endurance than an SSD. Keep write-heavy databases on the M.2 pool when
+there is one, and use the eMMC pool for configs, small apps and replicas.
 
 ## Upgrades
 
