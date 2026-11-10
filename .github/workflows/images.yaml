@@ -10,6 +10,7 @@
 # same Talos with fixes from this repo.
 # track.yaml creates those tags and dispatches this workflow on them, so a
 # normal run needs no human. Pushing a v* tag by hand works the same way.
+# Every tag run builds, even if the release already exists (its assets are replaced).
 # Running it by hand on a branch builds and uploads workflow artifacts (7 days)
 # without publishing a release.
 name: images
@@ -27,10 +28,6 @@ on:
         default: true
       netboot:
         description: "Also build the PXE/TFTP netboot tree"
-        type: boolean
-        default: false
-      force:
-        description: "Rebuild even if this tag already has a release"
         type: boolean
         default: false
 
@@ -55,7 +52,6 @@ jobs:
       pkgs: ${{ steps.v.outputs.pkgs }}
       overlay_tag: ${{ steps.v.outputs.overlay_tag }}
       release_tag: ${{ steps.v.outputs.release_tag }}
-      skip: ${{ steps.v.outputs.skip }}
       owner: ${{ steps.v.outputs.owner }}
       media: ${{ steps.v.outputs.media }}
       netboot: ${{ steps.v.outputs.netboot }}
@@ -66,17 +62,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT: ${{ inputs.talos_version }}
-          FORCE: ${{ inputs.force }}
           MEDIA: ${{ github.event_name == 'workflow_dispatch' && inputs.media || github.event_name != 'workflow_dispatch' }}
           NETBOOT: ${{ github.event_name == 'workflow_dispatch' && inputs.netboot }}
         run: |
           set -euo pipefail
           # The tag is the version: v1.14.5 and v1.14.5-rN both build Talos v1.14.5.
-          release_tag=""; skip=false
+          release_tag=""
           if [ "${GITHUB_REF_TYPE}" = tag ]; then
             release_tag="${GITHUB_REF_NAME}"; overlay_tag="${GITHUB_REF_NAME}"
             talos="${GITHUB_REF_NAME%-r[0-9]*}"
-            if [ "${FORCE}" != true ] && gh release view "${release_tag}" >/dev/null 2>&1; then skip=true; fi
           else
             talos="${INPUT:-$(gh api repos/siderolabs/talos/releases/latest --jq .tag_name)}"
             overlay_tag="${talos}-$(git rev-parse --short HEAD)"
@@ -89,13 +83,12 @@ jobs:
           {
             echo "talos=${talos}"; echo "pkgs=${pkgs}"
             echo "overlay_tag=${overlay_tag}"; echo "release_tag=${release_tag}"
-            echo "skip=${skip}"; echo "owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+            echo "owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
             echo "media=${MEDIA}"; echo "netboot=${NETBOOT:-false}"
           } | tee -a "$GITHUB_OUTPUT"
 
   overlay:
     needs: resolve
-    if: needs.resolve.outputs.skip != 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     steps:
@@ -114,7 +107,7 @@ jobs:
 
   media-kernel:
     needs: resolve
-    if: needs.resolve.outputs.skip != 'true' && needs.resolve.outputs.media == 'true'
+    if: needs.resolve.outputs.media == 'true'
     uses: ./.github/workflows/media-kernel.yaml
     with:
       talos: ${{ needs.resolve.outputs.talos }}
@@ -281,6 +274,8 @@ jobs:
           name: ${{ needs.resolve.outputs.release_tag }} (Talos ${{ needs.resolve.outputs.talos }})
           body_path: notes.md
           files: dist/*
+          # a tag always rebuilds; replace the assets of an existing release
+          overwrite_files: true
 
   # Unattended runs (push/dispatch from track.yaml) report failures as an issue
   # instead of relying on someone reading the Actions tab. The media flavor is
