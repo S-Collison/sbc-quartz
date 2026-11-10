@@ -1,7 +1,7 @@
 # The only scheduled workflow. Everything published comes from here.
 #
 # 1. pins (daily / by hand)
-#    latest Talos release + its PKGS           -> talos.env, Makefile, .kres.yaml, example patches
+#    latest Talos release + its PKGS           -> Makefile/.kres.yaml defaults (local builds), example patches
 #    latest siderolabs/sbc-rockchip release:
 #      U-Boot, TF-A, rkbin (+ checksums), bldr, TOOLS, installer go.mod/go.sum
 #                                              -> Pkgfile, Makefile, .kres.yaml, installers/quartz64/src
@@ -11,9 +11,9 @@
 #      fails  -> branch auto/update-pins + PR labelled auto-update (and nothing else happens)
 #
 # 2. tag (after pins, and on every merge to main that touches build inputs)
-#    Tags follow upstream Talos: the first build for Talos v1.14.5 is tagged v1.14.5,
-#    later fixes from this repo for the same Talos become v1.14.5-r1, -r2, ...
-#    A new tag is created only when build inputs differ from the last tag, then
+#    The tag is the version. Latest upstream Talos v1.14.6 with no v1.14.6 tag here -> tag
+#    main v1.14.6. Build inputs changed since the newest v1.14.6[-rN] -> v1.14.6-r(N+1).
+#    A tag is only created after the pins for that release built (step 1), then
 #    images.yaml is dispatched on it (it publishes the release; failures open an issue).
 #
 # 3. containers
@@ -33,7 +33,6 @@ on:
   push:
     branches: [main]
     paths:
-      - talos.env
       - Pkgfile
       - Makefile
       - go.work
@@ -65,7 +64,7 @@ concurrency:
 env:
   # what counts as a build input for tagging (keep in sync with the push paths above, minus containers)
   BUILD_PATHS: >-
-    talos.env Pkgfile Makefile go.work .dockerignore artifacts installers internal profiles kernel
+    Pkgfile Makefile go.work .dockerignore artifacts installers internal profiles kernel
     hack/build-image.sh hack/zboot-extract.py hack/media-modules.py
     .github/workflows/images.yaml .github/workflows/media-kernel.yaml
 
@@ -181,8 +180,13 @@ jobs:
       - name: Tag a new build if build inputs changed
         run: |
           set -euo pipefail
-          . ./talos.env
-          v="${TALOS_VERSION}"
+          if [ "${GITHUB_EVENT_NAME}" = push ]; then
+            # a merge: rebuild the Talos version already released here; a new upstream
+            # version waits for the daily pins run, which validates it first
+            newest="$(git tag -l 'v[0-9]*' | sort -V | tail -n1)"
+            v="${newest%-r[0-9]*}"
+          fi
+          [ -n "${v:-}" ] || v="$(gh api repos/siderolabs/talos/releases/latest --jq .tag_name)"
           # newest existing tag for this Talos version: v, v-r1, v-r2, ...
           last="$(git tag -l "${v}" "${v}-r*" | sort -V | tail -n1)"
           if [ -z "${last}" ]; then
@@ -200,7 +204,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${new}" -m "Talos ${v} build ${new} (pkgs ${PKGS})"
+          git tag -a "${new}" -m "Talos ${v} (${new})"
           git push origin "refs/tags/${new}"
           # tags pushed with GITHUB_TOKEN don't trigger workflows; dispatch explicitly
           gh workflow run images.yaml --ref "${new}"
