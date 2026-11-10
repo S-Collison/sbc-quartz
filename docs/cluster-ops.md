@@ -120,23 +120,45 @@ U-Boot on every board has PXE. Local disks are tried first, then the network.
 CI publishes a TFTP tree per flavor (`netboot-<talos>-<flavor>.tar.gz`). See
 [netboot.md](netboot.md) for the management node setup and the PXE → holzkube → install flow.
 
-## DRBD / LINSTOR (Piraeus): eMMC partition and/or M.2 SSD
+## Worker storage and DRBD / LINSTOR (Piraeus)
 
-The images already contain the `drbd` extension and `drbd.yaml` loads it. Storage for
-LINSTOR comes from either place, or both, as separate pools:
+The images already contain the `drbd` extension and `drbd.yaml` loads it. Storage is
+configured per node in two stages, with the standard images (machine config only).
 
-**A partition of the boot eMMC.** The Talos image is about 1 GB, so most of a 256 GB eMMC
-is free. Add `talos/patches/emmc-drbd.yaml` to the node's **first** config (holzkube stored
-patch): EPHEMERAL (`/var`) is capped at 48 GiB, a 150 GiB raw partition
-`/dev/disk/by-partlabel/r-drbd` is created for LINSTOR, and the rest stays unallocated for a
-second partition later. This is configuration only; the images are unchanged. Applying it to
-an already-installed node only creates `r-drbd` if there is free space. EPHEMERAL never
-shrinks, so wipe it first (the command is in the patch).
+### Stage 1: cap `/var` before the node joins
 
-**An M.2 SSD.** Leave the NVMe disk out of Talos volumes (no `UserVolumeConfig` on it), so
-LINSTOR can take the whole disk (`/dev/nvme0n1`).
+Add `talos/patches/ephemeral-cap.yaml` to every Quartz/SOQuartz worker's **first** config
+(holzkube stored patch). EPHEMERAL (`/var`) stops at 48 GiB instead of filling the eMMC, and
+the rest stays unallocated. This is the only part that must be decided up front: EPHEMERAL is
+sized when it's created and never shrinks (the patch has the wipe command if you need to redo it).
 
-Then:
+### Stage 2: give each node its LINSTOR partition, any time later
+
+Per node, on the running node, pick where its replicated storage lives and edit the size:
+
+| patch | partition `r-drbd` on | when |
+|---|---|---|
+| `drbd-emmc.yaml` | free space on the eMMC (default 150 GiB) | eMMC to spare; fastest |
+| `drbd-sd.yaml` | the whole microSD card | eMMC scarce: cards are cheap and replaceable, and with 2–3 copies a dead card only costs a resync |
+
+```sh
+talosctl -n <ip> patch mc --patch @talos/patches/drbd-emmc.yaml    # or drbd-sd.yaml
+talosctl -n <ip> get volumestatus                                 # r-drbd ready
+```
+
+Both create the same `/dev/disk/by-partlabel/r-drbd` and label the node
+`sbc-quartz.io/linstor=true` (plus `sbc-quartz.io/drbd-device=emmc|sd`), so nodes can mix
+and the LINSTOR side is identical. Leave a node out of stage 2 and it simply has no
+LINSTOR storage. It can still mount volumes over the network (diskless).
+
+For SD: use high-endurance cards of the same size on every node. They're slower than eMMC at
+small synchronous writes, and every write waits for the slowest copy, so keep databases off
+nodes backed by cards.
+
+**An M.2 SSD** instead or as well: leave the NVMe disk out of Talos volumes (no
+`UserVolumeConfig` on it) and give LINSTOR the whole disk (`/dev/nvme0n1`) as a second pool.
+
+### LINSTOR
 
 1. Install the operator:
 
@@ -148,23 +170,37 @@ Then:
 2. Apply the Talos module-loader override from the Piraeus "Talos" guide
    (`LinstorSatelliteConfiguration` that removes the `drbd-module-loader` init
    container), and create a `LinstorCluster`.
-3. eMMC pool: label the nodes and apply the example:
-   `kubectl label node <node> sbc-quartz.io/drbd=emmc` and
-   `kubectl apply -f talos/examples/linstor-emmc.yaml`. It creates the LVM thin pool on
-   `r-drbd` and two StorageClasses:
+3. `kubectl apply -f talos/examples/linstor-drbd.yaml`: pool `drbd` (LVM thin on `r-drbd`) on
+   every labelled node, and two StorageClasses:
 
    | StorageClass | copies | space per GiB | survives |
    |---|---|---|---|
-   | `linstor-emmc-r2` | 2 + diskless tie-breaker | 2 GiB | one board down |
-   | `linstor-emmc-r3` | 3 | 3 GiB | two boards' disks lost |
+   | `linstor-r2` | 2 + diskless tie-breaker | 2 GiB | one board down |
+   | `linstor-r3` | 3 | 3 GiB | two boards' disks lost |
 
-   With three Quartz/SOQuartz workers at 150 GiB each that's about 225 GiB usable with r2
-   or 150 GiB with r3. Use r2 by default and r3 for data you can't rebuild.
+   With three workers at 150 GiB each that's about 225 GiB usable with r2 or 150 GiB with r3.
+   Use r2 by default and r3 for data you can't rebuild. Nodes added to stage 2 later join the
+   pool by themselves.
 4. Check: `talosctl -n <ip> read /proc/modules | grep drbd` and
    `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor storage-pool list`.
 
-eMMC has less write endurance than an SSD. Keep write-heavy databases on the M.2 pool when
-there is one, and use the eMMC pool for configs, small apps and replicas.
+**What goes where.** This pool is for small, slowly changing data: app configs, small
+databases, state that has to survive a node. Write volume is low, which also makes the SD
+option fine. Bulk and churny data goes to the Pi 5's NFS share instead. Container logs are
+always written to each node's `/var` (that's what the 48 GiB is for) and can't be pointed at
+NFS. To keep them off the nodes, ship them with a collector (Fluent Bit / Vector DaemonSet) to
+Loki on the Pi 5. Most config consumers need only one writer, so plain RWO volumes from
+`linstor-r3` are enough. Shared read-write (RWX) volumes are better served by the Pi 5's NFS
+than by an NFS server pod on top of DRBD. If you do build that, give the PV the Service's
+ClusterIP rather than its DNS name: the node mounts NFS itself and can't resolve
+`*.svc.cluster.local`.
+
+**Replacing a dead SD card:** fit the new card and reboot the node (Talos recreates
+`r-drbd`, the operator recreates the LVM pool from it). Then, in the controller
+(`kubectl -n piraeus-datastore exec -it deploy/linstor-controller -- bash`):
+`linstor resource list --faulty` and, for each resource on that node,
+`linstor resource delete <node> <res>`; LINSTOR places a new replica and resyncs it.
+Check `linstor resource list` until everything is UpToDate.
 
 ## Upgrades
 

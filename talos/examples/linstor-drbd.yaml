@@ -1,38 +1,38 @@
-# LINSTOR on the eMMC raw partition from talos/patches/emmc-drbd.yaml.
+# LINSTOR on the raw partition r-drbd from talos/patches/drbd-emmc.yaml (eMMC free space)
+# or talos/patches/drbd-sd.yaml (whole microSD); nodes can use either.
 # Needs Piraeus Operator v2 installed (and the Talos drbd-module-loader override
 # from the Piraeus "Talos" guide, see docs/cluster-ops.md).
 #
-# The operator turns /dev/disk/by-partlabel/r-drbd into an LVM thin pool on every
-# node labelled sbc-quartz.io/drbd=emmc:
-#   kubectl label node <node> sbc-quartz.io/drbd=emmc
+# The operator turns /dev/disk/by-partlabel/r-drbd into an LVM thin pool (pool name
+# "drbd") on every node labelled sbc-quartz.io/linstor=true, which both patches set.
 apiVersion: piraeus.io/v1
 kind: LinstorSatelliteConfiguration
 metadata:
-  name: emmc-pool
+  name: drbd-pool
 spec:
   nodeSelector:
-    sbc-quartz.io/drbd: emmc
+    sbc-quartz.io/linstor: "true"
   storagePools:
-    - name: emmc
+    - name: drbd
       lvmThinPool:
-        volumeGroup: linstor_emmc
+        volumeGroup: linstor_drbd
         thinPool: thin
       source:
         hostDevices:
           - /dev/disk/by-partlabel/r-drbd
 ---
 # Two copies + a diskless tie-breaker on a third node for quorum (LINSTOR adds it
-# automatically). Best use of space: each GiB of data costs 2 GiB of eMMC.
+# automatically). Best use of space: each GiB of data costs 2 GiB of storage.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: linstor-emmc-r2
+  name: linstor-r2
 provisioner: linstor.csi.linbit.com
 allowVolumeExpansion: true
 volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: Delete
 parameters:
-  linstor.csi.linbit.com/storagePool: emmc
+  linstor.csi.linbit.com/storagePool: drbd
   linstor.csi.linbit.com/placementCount: "2"
   property.linstor.csi.linbit.com/DrbdOptions/Resource/quorum: majority
   property.linstor.csi.linbit.com/DrbdOptions/Resource/on-no-quorum: suspend-io
@@ -41,13 +41,13 @@ parameters:
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: linstor-emmc-r3
+  name: linstor-r3
 provisioner: linstor.csi.linbit.com
 allowVolumeExpansion: true
 volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: Delete
 parameters:
-  linstor.csi.linbit.com/storagePool: emmc
+  linstor.csi.linbit.com/storagePool: drbd
   linstor.csi.linbit.com/placementCount: "3"
   property.linstor.csi.linbit.com/DrbdOptions/Resource/quorum: majority
   property.linstor.csi.linbit.com/DrbdOptions/Resource/on-no-quorum: suspend-io

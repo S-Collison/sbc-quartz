@@ -1,0 +1,19 @@
+# Stage 1 (every Quartz/SOQuartz worker, FIRST config, before it joins):
+# keep /var (EPHEMERAL: container images, logs, emptyDir) from taking the whole eMMC.
+# The rest of the eMMC stays unallocated, so storage can be decided per node later
+# (stage 2: drbd-emmc.yaml or drbd-sd.yaml, applied to the running node).
+#
+# Only the first config counts: EPHEMERAL is sized when it is created and never shrinks.
+# To redo it on an installed node:
+#   talosctl -n <ip> reset --system-labels-to-wipe EPHEMERAL --reboot --graceful=false
+#
+# 48 GiB suits 64–256 GB modules; use 24GiB on a 32 GB module.
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 16GiB
+  maxSize: 48GiB
+  grow: false

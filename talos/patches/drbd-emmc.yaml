@@ -1,0 +1,22 @@
+# Stage 2, option A: LINSTOR partition in the eMMC's free space.
+# Apply to a running node (needs ephemeral-cap.yaml at its first config, so there is room):
+#   talosctl -n <ip> patch mc --patch @talos/patches/drbd-emmc.yaml
+# Edit the size per node before applying. Then check:
+#   talosctl -n <ip> get volumestatus        # r-drbd ready
+#   talosctl -n <ip> get discoveredvolumes | grep r-drbd
+#
+# Creates /dev/disk/by-partlabel/r-drbd and labels the node for the LINSTOR pool
+# (talos/examples/linstor-drbd.yaml). Use drbd-sd.yaml instead to put it on the SD card.
+machine:
+  nodeLabels:
+    sbc-quartz.io/linstor: "true"
+    sbc-quartz.io/drbd-device: emmc
+---
+apiVersion: v1alpha1
+kind: RawVolumeConfig
+name: drbd                       # partition label r-drbd
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 150GiB                # edit per node; leave some free space for later
+  maxSize: 150GiB
