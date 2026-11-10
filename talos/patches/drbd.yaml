@@ -1,9 +1,19 @@
 # Load DRBD from the drbd system extension (baked into the images) for
-# Piraeus / LINSTOR. usermode_helper must be disabled on Talos.
+# Piraeus / LINSTOR, plus the device-mapper modules LVM thin pools need.
+# The Piraeus satellite can't load modules on Talos, so everything is listed here.
+# usermode_helper must be disabled on Talos.
+#
+# Apply with the first config on every node that will run Piraeus (all LINSTOR
+# storage nodes, and any node whose pods mount LINSTOR volumes). The label lets
+# talos/examples/piraeus-talos.yaml run Piraeus only where DRBD is available.
 machine:
+  nodeLabels:
+    sbc-quartz.io/drbd-module: "true"
   kernel:
     modules:
       - name: drbd
         parameters:
           - usermode_helper=disabled
       - name: drbd_transport_tcp
+      - name: dm_thin_pool          # LVM thin pools (linstor-drbd.yaml)
+      - name: dm_snapshot           # LVM snapshots

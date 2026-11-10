@@ -121,11 +121,50 @@ U-Boot on every board has PXE. Local disks are tried first, then the network.
 CI publishes a TFTP tree per flavor (`netboot-<talos>-<flavor>.tar.gz`). See
 [netboot.md](netboot.md) for the management node setup and the PXE → holzkube → install flow.
 
-## M.2 SSD with DRBD / LINSTOR (Piraeus)
+## Worker storage and DRBD / LINSTOR (Piraeus)
 
-The images already contain the `drbd` extension and `drbd.yaml` loads it.
+The images already contain the `drbd` extension and `drbd.yaml` loads it. Storage is
+configured per node in two stages, with the standard images (machine config only).
 
-1. Leave the NVMe disk out of Talos volumes (no `UserVolumeConfig` on it), so LINSTOR can take it.
+### Stage 1: cap `/var` before the node joins
+
+Add `talos/patches/ephemeral-cap.yaml` to every Quartz/SOQuartz worker's **first** config
+(holzkube stored patch). EPHEMERAL (`/var`) stops at 48 GiB instead of filling the eMMC, and
+the rest stays unallocated. This is the only part that must be decided up front: EPHEMERAL is
+sized when it's created and never shrinks (the patch has the wipe command if you need to redo it).
+
+### Stage 2: give each node its LINSTOR partition, any time later
+
+Per node, on the running node, pick where its replicated storage lives and edit the size:
+
+| patch | partition `r-drbd` on | when |
+|---|---|---|
+| `drbd-emmc.yaml` | free space on the eMMC (default 150 GiB) | eMMC to spare; fastest |
+| `drbd-sd.yaml` | the whole microSD card | eMMC scarce: cards are cheap and replaceable, and with 2–3 copies a dead card only costs a resync |
+
+```sh
+talosctl -n <ip> patch mc --patch @talos/patches/drbd-emmc.yaml    # or drbd-sd.yaml
+talosctl -n <ip> get volumestatus                                 # r-drbd ready
+```
+
+Both create the same `/dev/disk/by-partlabel/r-drbd` and label the node
+`sbc-quartz.io/linstor=true` (plus `sbc-quartz.io/drbd-device=emmc|sd`), so nodes can mix
+and the LINSTOR side is identical. Leave a node out of stage 2 and it simply has no
+LINSTOR storage. It can still mount volumes over the network (diskless).
+
+For SD: use high-endurance cards of the same size on every node. They're slower than eMMC at
+small synchronous writes, and every write waits for the slowest copy, so keep databases off
+nodes backed by cards.
+
+**An M.2 SSD** instead or as well: leave the NVMe disk out of Talos volumes (no
+`UserVolumeConfig` on it) and give LINSTOR the whole disk (`/dev/nvme0n1`) as a second pool.
+
+### LINSTOR
+
+1. Every node that runs Piraeus needs `drbd.yaml` in its config: all storage workers, and
+   any node whose pods mount LINSTOR volumes. It loads DRBD and the LVM thin modules and
+   labels the node `sbc-quartz.io/drbd-module=true`; Piraeus runs only on those nodes.
+   (For the Pi 5, also add the `siderolabs/drbd` extension to its Image Factory schematic.)
 2. Install the operator:
 
    ```sh
@@ -133,10 +172,66 @@ The images already contain the `drbd` extension and `drbd.yaml` loads it.
      -n piraeus-datastore --create-namespace
    ```
 
-3. Apply the Talos module-loader override from the Piraeus "Talos" guide
-   (`LinstorSatelliteConfiguration` that removes the `drbd-module-loader` init
-   container). Then create a `LinstorCluster` and a storage pool on `/dev/nvme0n1`.
-4. Check: `talosctl -n <ip> read /proc/modules | grep drbd`.
+3. `kubectl apply -f talos/examples/piraeus-talos.yaml`: the `LinstorCluster`, plus the Talos
+   adjustments from the Piraeus Talos guide (no module loader or shutdown guard, no systemd
+   or kernel-header mounts, LVM metadata under `/var/etc/lvm` because `/etc` is read-only).
+4. `kubectl apply -f talos/examples/linstor-drbd.yaml`: pool `drbd` (LVM thin on `r-drbd`) on
+   every node labelled by stage 2, and two StorageClasses:
+
+   | StorageClass | copies | space per GiB | survives |
+   |---|---|---|---|
+   | `linstor-r2` | 2 + diskless tie-breaker | 2 GiB | one board down |
+   | `linstor-r3` | 3 | 3 GiB | two boards' disks lost |
+
+   With three workers at 150 GiB each that's about 225 GiB usable with r2 or 150 GiB with r3.
+   Use r2 by default and r3 for data you can't rebuild. Nodes added to stage 2 later join the
+   pool by themselves. Both classes pause I/O on a node that loses quorum rather than return
+   errors, which the Piraeus HA controller (on by default) uses to move the workload.
+
+### First node: check each step before doing the others
+
+These parts are configured but haven't been run on these boards yet.
+
+| after | check | expect |
+|---|---|---|
+| boot, before config | `talosctl get volumestatus --insecure -n <ip>` | EPHEMERAL not provisioned yet (waiting for config) |
+| first config | `talosctl -n <ip> get volumestatus` and `get discoveredvolumes` | EPHEMERAL ≈48 GiB, rest of the eMMC free |
+| first config | `talosctl -n <ip> read /sys/module/drbd/parameters/usermode_helper` | `disabled` |
+| first config | `talosctl -n <ip> read /proc/modules \| grep -E 'drbd\|dm_thin'` | `drbd`, `drbd_transport_tcp`, `dm_thin_pool` |
+| stage 2 patch | `talosctl -n <ip> get volumestatus` | `r-drbd` ready, without a reboot (reboot once if not) |
+| stage 2, SD | `talosctl -n <ip> get disks` | the card shows transport `mmc` and isn't the system disk |
+| Piraeus | `kubectl -n piraeus-datastore get pods -o wide` | a `linstor-satellite` per labelled node, Running |
+| pool | `kubectl -n piraeus-datastore exec deploy/linstor-controller -- linstor storage-pool list` | `drbd` on the node, LVM_THIN, free space ≈ partition size |
+| volume | a test PVC on `linstor-r2` + a pod | Bound; `linstor resource list` shows 2 UpToDate + 1 TieBreaker |
+
+If holzkube won't accept a multi-document stored patch (`ephemeral-cap.yaml` is a separate
+`VolumeConfig` document), apply the first config with talosctl instead:
+`talosctl apply-config --insecure -n <ip> --file worker.yaml --config-patch @talos/patches/ephemeral-cap.yaml --config-patch @talos/patches/drbd.yaml`.
+
+### Backups
+
+Replicas aren't backups: a bad edit or a deletion reaches every copy at once. Keep configs in
+git, so the volume is a convenience copy. For data that isn't in git, take LINSTOR (CSI)
+snapshots and ship them to S3-compatible storage on the Pi 5 (e.g. MinIO on its SSD), off
+the workers that hold the replicas.
+
+**What goes where.** This pool is for small, slowly changing data: app configs, small
+databases, state that has to survive a node. Write volume is low, which also makes the SD
+option fine. Bulk and churny data goes to the Pi 5's NFS share instead. Container logs are
+always written to each node's `/var` (that's what the 48 GiB is for) and can't be pointed at
+NFS. To keep them off the nodes, ship them with a collector (Fluent Bit / Vector DaemonSet) to
+Loki on the Pi 5. Most config consumers need only one writer, so plain RWO volumes from
+`linstor-r3` are enough. Shared read-write (RWX) volumes are better served by the Pi 5's NFS
+than by an NFS server pod on top of DRBD. If you do build that, give the PV the Service's
+ClusterIP rather than its DNS name: the node mounts NFS itself and can't resolve
+`*.svc.cluster.local`.
+
+**Replacing a dead SD card:** fit the new card and reboot the node (Talos recreates
+`r-drbd`, the operator recreates the LVM pool from it). Then, in the controller
+(`kubectl -n piraeus-datastore exec -it deploy/linstor-controller -- bash`):
+`linstor resource list --faulty` and, for each resource on that node,
+`linstor resource delete <node> <res>`; LINSTOR places a new replica and resyncs it.
+Check `linstor resource list` until everything is UpToDate.
 
 ## Upgrades
 
