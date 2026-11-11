@@ -7,7 +7,8 @@
 # To redo it on an installed node:
 #   talosctl -n <ip> reset --system-labels-to-wipe EPHEMERAL --reboot --graceful=false
 #
-# 48 GiB suits 64–256 GB modules; use 24GiB on a 32 GB module.
+# Sized for the 128 GB eMMC modules (about 119 GiB usable): /var 32 GiB, leaving
+# ~85 GiB for drbd-emmc.yaml (64 GiB) plus spare. 64 GB module: maxSize 24GiB.
 apiVersion: v1alpha1
 kind: VolumeConfig
 name: EPHEMERAL
@@ -15,5 +16,5 @@ provisioning:
   diskSelector:
     match: system_disk
   minSize: 16GiB
-  maxSize: 48GiB
+  maxSize: 32GiB
   grow: false

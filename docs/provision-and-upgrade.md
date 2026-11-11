@@ -28,7 +28,7 @@ fingerprint, then writes the config. Add these patches from `talos/patches/` (st
 patches / machine class in holzkube):
 
 - `drbd.yaml`: DRBD + LVM thin modules for Piraeus/LINSTOR, and the node label Piraeus selects on.
-- `ephemeral-cap.yaml` (workers, first apply): `/var` capped at 48 GiB. Later, per running node: `drbd-emmc.yaml` (eMMC free space) or `drbd-sd.yaml` (microSD) for LINSTOR.
+- `ephemeral-cap.yaml` (workers, first apply): `/var` capped at 32 GiB. Later, per running node: `drbd-emmc.yaml` (eMMC free space) or `drbd-sd.yaml` (microSD) for LINSTOR.
 - `tuppr.yaml`: Talos API access for tuppr.
 - `registry-mirror.yaml`: pull through the management node's caches.
 - `rpi5-controlplane.yaml` (Pi 5 only, first apply): etcd/EPHEMERAL on the SSD, media volume.

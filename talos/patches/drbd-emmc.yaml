@@ -18,5 +18,5 @@ name: drbd                       # partition label r-drbd
 provisioning:
   diskSelector:
     match: system_disk
-  minSize: 150GiB                # edit per node; leave some free space for later
-  maxSize: 150GiB
+  minSize: 64GiB                 # 128 GB eMMC; edit per node, keep some space free for later
+  maxSize: 64GiB

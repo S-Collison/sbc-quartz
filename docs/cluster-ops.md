@@ -129,9 +129,20 @@ configured per node in two stages, with the standard images (machine config only
 ### Stage 1: cap `/var` before the node joins
 
 Add `talos/patches/ephemeral-cap.yaml` to every Quartz/SOQuartz worker's **first** config
-(holzkube stored patch). EPHEMERAL (`/var`) stops at 48 GiB instead of filling the eMMC, and
+(holzkube stored patch). EPHEMERAL (`/var`) stops at 32 GiB instead of filling the eMMC, and
 the rest stays unallocated. This is the only part that must be decided up front: EPHEMERAL is
 sized when it's created and never shrinks (the patch has the wipe command if you need to redo it).
+
+Everything on the Talos side is machine config: the `VolumeConfig` (stage 1) and the
+`RawVolumeConfig` (stage 2) are documents in the node's config, nothing is partitioned by hand.
+Two newer Talos documents don't fit here:
+
+- `LVMLogicalVolumeConfig` (Talos-managed LVM volumes) would make Talos own the volume
+  group. LINSTOR needs to create and own its LVM thin pool, so Talos only hands it a raw
+  partition. Mirroring is DRBD's job across nodes, not LVM RAID inside one node.
+- `UnattendedInstallConfig` installs Talos from ISO/PXE boot media. These boards are
+  flashed with a disk image and boot it directly, so there is no install step. It matters
+  only for the optional netboot path, and the install-image guard already handles it.
 
 ### Stage 2: give each node its LINSTOR partition, any time later
 
@@ -139,7 +150,7 @@ Per node, on the running node, pick where its replicated storage lives and edit 
 
 | patch | partition `r-drbd` on | when |
 |---|---|---|
-| `drbd-emmc.yaml` | free space on the eMMC (default 150 GiB) | eMMC to spare; fastest |
+| `drbd-emmc.yaml` | free space on the eMMC (default 64 GiB of a 128 GB module) | eMMC to spare; fastest |
 | `drbd-sd.yaml` | the whole microSD card | eMMC scarce: cards are cheap and replaceable, and with 2–3 copies a dead card only costs a resync |
 
 ```sh
@@ -183,7 +194,8 @@ nodes backed by cards.
    | `linstor-r2` | 2 + diskless tie-breaker | 2 GiB | one board down |
    | `linstor-r3` | 3 | 3 GiB | two boards' disks lost |
 
-   With three workers at 150 GiB each that's about 225 GiB usable with r2 or 150 GiB with r3.
+   With three workers at 64 GiB each that's about 96 GiB usable with r2 or 64 GiB with r3,
+   plenty for configs.
    Use r2 by default and r3 for data you can't rebuild. Nodes added to stage 2 later join the
    pool by themselves. Both classes pause I/O on a node that loses quorum rather than return
    errors, which the Piraeus HA controller (on by default) uses to move the workload.
@@ -195,7 +207,7 @@ These parts are configured but haven't been run on these boards yet.
 | after | check | expect |
 |---|---|---|
 | boot, before config | `talosctl get volumestatus --insecure -n <ip>` | EPHEMERAL not provisioned yet (waiting for config) |
-| first config | `talosctl -n <ip> get volumestatus` and `get discoveredvolumes` | EPHEMERAL ≈48 GiB, rest of the eMMC free |
+| first config | `talosctl -n <ip> get volumestatus` and `get discoveredvolumes` | EPHEMERAL ≈32 GiB, rest of the eMMC free |
 | first config | `talosctl -n <ip> read /sys/module/drbd/parameters/usermode_helper` | `disabled` |
 | first config | `talosctl -n <ip> read /proc/modules \| grep -E 'drbd\|dm_thin'` | `drbd`, `drbd_transport_tcp`, `dm_thin_pool` |
 | stage 2 patch | `talosctl -n <ip> get volumestatus` | `r-drbd` ready, without a reboot (reboot once if not) |
@@ -218,7 +230,7 @@ the workers that hold the replicas.
 **What goes where.** This pool is for small, slowly changing data: app configs, small
 databases, state that has to survive a node. Write volume is low, which also makes the SD
 option fine. Bulk and churny data goes to the Pi 5's NFS share instead. Container logs are
-always written to each node's `/var` (that's what the 48 GiB is for) and can't be pointed at
+always written to each node's `/var` (that's what the 32 GiB is for) and can't be pointed at
 NFS. To keep them off the nodes, ship them with a collector (Fluent Bit / Vector DaemonSet) to
 Loki on the Pi 5. Most config consumers need only one writer, so plain RWO volumes from
 `linstor-r3` are enough. Shared read-write (RWX) volumes are better served by the Pi 5's NFS
