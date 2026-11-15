@@ -5,7 +5,7 @@
 #   hack/build-image.sh [board ...]          # default: quartz64-a soquartz-blade soquartz-model-a
 #
 # Env:
-#   TALOS_VERSION         Talos version (default: from the newest vX.Y.Z[-rN] git tag)
+#   TALOS_VERSION         Talos version (default: from the newest vX.Y.Z git tag)
 #   FLAVOR                stock | media (default stock). "media" = custom kernel with Hantro/RGA;
 #                         needs the images from .github/workflows/media-kernel.yaml
 #   OVERLAY_IMAGE         overlay from this repo (default ghcr.io/s-collison/sbc-quartz:$(git describe))

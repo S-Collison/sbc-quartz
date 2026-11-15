@@ -86,7 +86,7 @@ sudo systemctl start etcd-snapshot.service && ls -l "$(. /etc/sbc-quartz/mgmt.en
 ```sh
 sudo sbc-flash soquartz-blade /dev/sdb              # latest release, stock flavor
 sudo sbc-flash quartz64-a /dev/sdb --media          # media (Hantro) flavor
-sudo sbc-flash soquartz-model-a /dev/sdb --tag v1.14.5-r1
+sudo sbc-flash soquartz-model-a /dev/sdb --tag v1.15.0-beta.1    # or build-v1.15.0-beta.1 for a manual build
 ```
 
 It downloads `talos-<talos>-<board>[-media].raw.xz` from the GitHub release into

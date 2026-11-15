@@ -63,7 +63,8 @@ Hands-off: one daily workflow, `track.yaml`, and you only act on failures.
   branch. Pins are written to the build files, the overlay is test-built, and the change
   is committed to `main`. There is no version file: **the tag is the version**.
 - Releases are tagged after upstream Talos: **`v1.14.5`** is the first build for Talos
-  v1.14.5; **`v1.14.5-r1`, `-r2`…** are rebuilds with fixes from this repo. A tag is created
+  v1.14.5. Fixes from this repo don't get new tags: the tag is moved to the fixed `main` and
+  the release rebuilt. A tag is created or moved
   only when build inputs changed since the last one, and `images.yaml` then publishes the
   release: stock and media images and upgrade installers for quartz64-a, soquartz-blade
   and soquartz-model-a.

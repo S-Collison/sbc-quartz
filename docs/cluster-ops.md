@@ -52,13 +52,13 @@ must pass:
 Then, in the same run (and on every merge to `main` that touches build inputs):
 
 - **tag**: the tag is the version. Latest upstream Talos has no tag here yet →
-  tag `main` `vX.Y.Z` (daily run only, after the pins built). Build inputs changed since the newest `vX.Y.Z[-rN]` → `vX.Y.Z-r(N+1)`.
+  tag `main` `vX.Y.Z` (daily run only, after the pins built). Build inputs changed on `main` since `vX.Y.Z` → the tag is moved to `main` and the release rebuilt (no `-rN` tags; the tag always means "latest build of that upstream version").
   Otherwise nothing. The new tag is pushed and `images.yaml` is dispatched on it.
 - **containers**: `media-containers.yaml` is dispatched if `containers/` changed since the
   commit recorded in the published image's labels, or the Scrypted/Debian base digest moved.
 
 Installers are pushed as `talos-installer-<board>[-media]:<talos>` (what tuppr upgrades
-to; a `-rN` rebuild replaces it) and the release assets stay on each tag.
+to; a rebuild replaces it) and the release assets are replaced with each rebuild.
 
 To build an older Talos, push a tag for it yourself (`git tag -a v1.14.4 -m v1.14.4 && git push
 origin v1.14.4`); the build reads the version from the tag. To stop new versions arriving,
@@ -78,7 +78,7 @@ the results and that link. Download with
 `talos-installer-<board>[-media]:<talos>`. Running it again for the same version deletes that
 release and its tag and publishes the new build in their place, so regenerate as often as you
 like. Untick *publish* for a test run that only keeps 7-day workflow artifacts. These builds
-never touch the `vX.Y.Z[-rN]` tags the tracker manages, never become the "latest" release, and
+never touch the `vX.Y.Z` tags the tracker manages, never become the "latest" release, and
 report failures through the same `build-failure` issue.
 From the CLI: `gh workflow run images.yaml --ref main -f talos_version=v1.15.0-beta.1`.
 
@@ -87,10 +87,10 @@ Runs on a `v*` tag (created by track, or pushed by you) or by hand. Failures on 
 open/comment an issue labelled `build-failure`. Run by hand on a branch, it builds and
 uploads 7-day workflow artifacts without a release. It:
 
-1. takes the Talos version from the tag (`v1.14.5-r2` → Talos v1.14.5) and the kernel build
+1. takes the Talos version from the tag (`v1.14.5` → Talos v1.14.5) and the kernel build
    (`PKGS`) from that Talos release's Makefile;
 2. builds the media kernel stack if it's missing (`media-kernel.yaml`), and the overlay
-   `ghcr.io/s-collison/sbc-quartz:<tag>` (e.g. `v1.14.5-r1`);
+   `ghcr.io/s-collison/sbc-quartz:<tag>` (e.g. `v1.14.5`);
 3. for each flavor × board (`quartz64-a`, `soquartz-blade`, `soquartz-model-a`):
    - `talos-<talos>-<board>[-media].raw.xz`, verified (idbloader, arm64 GRUB, fdtfile, PXE);
    - upgrade installer `ghcr.io/s-collison/talos-installer-<board>[-media]:<talos>`;

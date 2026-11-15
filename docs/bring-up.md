@@ -17,7 +17,7 @@ Express 7 (gateway, DHCP/DNS) ── PoE switch, VLAN 20 "cluster" 10.20.0.0/24
 1. One-time repo setting: Settings → Actions → General → Workflow permissions → **Read and
    write** and **Allow GitHub Actions to create and approve pull requests**.
 2. Merge to `main`. **track** runs on the merge (and daily): it tags `main` with the latest
-   Talos version (`v1.14.5`, later fixes `v1.14.5-r1`…) and starts **images**, which
+   Talos version (`v1.14.5`; later fixes move that tag and rebuild) and starts **images**, which
    builds the **stock** and **media** (Hantro) images for each board and publishes the Release.
    The first media run builds the kernel and takes several hours; stock images don't wait.
    From then on you only hear from it through an `auto-update` PR or a `build-failure` issue.

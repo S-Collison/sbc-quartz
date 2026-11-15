@@ -6,8 +6,8 @@
 # blocks the stock images.
 #
 # The tag is the version (no version file): v1.14.5 builds Talos v1.14.5 with the
-# kernel pkgs that Talos release pins; v1.14.5-r1, -r2 ... are rebuilds of the
-# same Talos with fixes from this repo.
+# kernel pkgs that Talos release pins. Fixes from this repo don't get new tags:
+# track.yaml moves the version's tag to main and rebuilds, replacing the release.
 # track.yaml creates those tags and dispatches this workflow on them, so a
 # normal run needs no human. Pushing a v* tag by hand works the same way.
 # Every tag run builds, even if the release already exists (its assets are replaced).
@@ -16,7 +16,7 @@
 # prereleases included (v1.15.0-beta.1, v1.14.5, ...), and publish a prerelease named
 # build-<talos>. Running it again for the same version replaces that release and its
 # tag with the new build, so betas and older versions can be regenerated at will
-# without touching the vX.Y.Z[-rN] tags. Untick "publish" for a 7-day artifact-only run.
+# without touching the vX.Y.Z tags. Untick "publish" for a 7-day artifact-only run.
 name: images
 on:
   push:
@@ -78,11 +78,11 @@ jobs:
           PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
         run: |
           set -euo pipefail
-          # The tag is the version: v1.14.5 and v1.14.5-rN both build Talos v1.14.5.
+          # The tag is the version: v1.14.5 builds Talos v1.14.5.
           release_tag=""; manual=false
           if [ "${GITHUB_REF_TYPE}" = tag ]; then
             release_tag="${GITHUB_REF_NAME}"; overlay_tag="${GITHUB_REF_NAME}"
-            talos="${GITHUB_REF_NAME%-r[0-9]*}"
+            talos="${GITHUB_REF_NAME}"
           else
             talos="${INPUT:-$(gh api repos/siderolabs/talos/releases/latest --jq .tag_name)}"
             overlay_tag="${talos}-$(git rev-parse --short HEAD)"
@@ -384,7 +384,7 @@ jobs:
           set -euo pipefail
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           title="images: ${{ needs.resolve.outputs.release_tag || needs.resolve.outputs.talos || github.ref_name }} failed"
-          body="$(printf 'Run: %s (%s on %s)\n\n| job | result |\n|---|---|\n| resolve | %s |\n| overlay | %s |\n| media-kernel | %s |\n| images (stock) | %s |\n| images-media | %s |\n| release | %s |\n\nFix on main: the tracker tags the fix as the next -rN and rebuilds. Close this once that release is out.' \
+          body="$(printf 'Run: %s (%s on %s)\n\n| job | result |\n|---|---|\n| resolve | %s |\n| overlay | %s |\n| media-kernel | %s |\n| images (stock) | %s |\n| images-media | %s |\n| release | %s |\n\nFix on main: the tracker moves the tag to the fix and rebuilds. Close this once that release is out.' \
             "${run_url}" "${GITHUB_EVENT_NAME}" "${GITHUB_SHA::7}" \
             "${{ needs.resolve.result }}" "${{ needs.overlay.result }}" "${{ needs.media-kernel.result }}" \
             "${{ needs.images.result }}" "${{ needs.images-media.result }}" "${{ needs.release.result }}")"

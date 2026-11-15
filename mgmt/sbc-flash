@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Download a release image and write it to a disk (eMMC in a USB adapter, SD card).
 #
-#   sbc-flash <board> <device> [--media] [--tag vX.Y.Z[-rN]] [--yes]
+#   sbc-flash <board> <device> [--media] [--tag vX.Y.Z | build-vX.Y.Z-beta.N] [--yes]
 #   sbc-flash quartz64-a /dev/sdb
-#   sbc-flash soquartz-blade /dev/sdc --media --tag v1.14.5-r1
+#   sbc-flash soquartz-blade /dev/sdc --media --tag build-v1.15.0-beta.1
 #
 # Boards: quartz64-a soquartz-blade soquartz-model-a. Default tag: latest release.
 # Verifies the .sha256 before writing and refuses mounted disks / the running root disk.
@@ -33,7 +33,7 @@ if lsblk -no MOUNTPOINTS "${dev}" | grep -q .; then echo "${dev} has mounted par
 if [ -z "${tag}" ]; then
   tag="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | python3 -c 'import json,sys;print(json.load(sys.stdin)["tag_name"])')"
 fi
-talos="${tag%%-r[0-9]*}"
+talos="${tag#build-}"
 img="talos-${talos}-${board}${flavor}.raw.xz"
 url="https://github.com/${REPO}/releases/download/${tag}"
 mkdir -p "${CACHE}/${tag}" && cd "${CACHE}/${tag}"
