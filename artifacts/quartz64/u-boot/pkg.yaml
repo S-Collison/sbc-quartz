@@ -64,6 +64,9 @@ steps:
           IFS=: read -r name defconfig dtb <<< "${entry}"
           mkdir -p /rootfs/artifacts/arm64/u-boot/${name}
           cp build/${defconfig}/u-boot-rockchip.bin /rootfs/artifacts/arm64/u-boot/${name}/
+          # the resolved config, so CI (hack/uboot-report.sh) and anyone with the overlay
+          # image can see exactly what was built without a serial console
+          cp build/${defconfig}/.config /rootfs/artifacts/arm64/u-boot/${name}/u-boot.config
           if [ -s build/${defconfig}/u-boot-rockchip-spi.bin ]; then
             cp build/${defconfig}/u-boot-rockchip-spi.bin /rootfs/artifacts/arm64/u-boot/${name}/
           fi

@@ -118,6 +118,23 @@ jobs:
             PLATFORM=linux/arm64,linux/amd64 \
             PKGS="${{ needs.resolve.outputs.pkgs }}" \
             TARGET_ARGS="--tag=${REGISTRY}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }} --push=true"
+      - uses: imjasonh/setup-crane@v0.7
+      - name: U-Boot configs from the pushed overlay
+        run: |
+          set -euo pipefail
+          mkdir -p _out/overlay _out/rel
+          crane export --platform linux/arm64 \
+            "${REGISTRY}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }}" - \
+            | tar x -C _out/overlay artifacts/arm64/u-boot
+          set +e; bash hack/uboot-report.sh _out/overlay > _out/rel/u-boot-report.md; rc=$?; set -e
+          cat _out/rel/u-boot-report.md >> "$GITHUB_STEP_SUMMARY"
+          tar -C _out/overlay/artifacts/arm64/u-boot -czf _out/rel/u-boot-configs.tar.gz --wildcards '*/u-boot.config'
+          [ "${rc}" = 0 ] || { echo "::error::a board would boot with a random MAC address (see the summary)"; exit 1; }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: u-boot-configs
+          path: _out/rel/
+          retention-days: 7
 
   media-kernel:
     needs: resolve
@@ -280,7 +297,10 @@ jobs:
           | SOQuartz + Model-A | \`talos-${t}-soquartz-model-a.raw.xz\` | \`talos-${t}-soquartz-model-a-media.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-soquartz-model-a[-media]:${t}\` |
 
           Flash: \`xz -dc <image> | sudo dd of=/dev/rdiskN bs=4m\`. Serial: UART2, 1500000 8N1. Bring-up: docs/bring-up.md.
+          Resolved U-Boot configs for every board: \`u-boot-configs.tar.gz\`.
+
           NOTES
+          [ -f dist/u-boot-report.md ] && cat dist/u-boot-report.md >> notes.md
           ls -la dist
       - name: Replace an earlier manual build of this version
         if: needs.resolve.outputs.manual == 'true'

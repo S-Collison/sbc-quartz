@@ -1,5 +1,6 @@
-# PR checks only. Nothing is pushed or uploaded (no durable artifacts);
-# releases come from images.yaml after merge.
+# PR checks only. Nothing is pushed to a registry or released; releases come from
+# images.yaml after merge. When the overlay changes, the resolved U-Boot configs are
+# kept as a short-lived workflow artifact (3 days) and summarised in a PR comment.
 name: ci
 on:
   pull_request:
@@ -59,10 +60,48 @@ jobs:
     needs: changes
     if: needs.changes.outputs.overlay == 'true'
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      pull-requests: write
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - uses: docker/setup-buildx-action@v4
       - name: Build overlay (arm64, not pushed)
-        run: make target-sbc-quartz PLATFORM=linux/arm64
+        run: make local-sbc-quartz PLATFORM=linux/arm64 DEST=_out/overlay
+      - name: U-Boot config report
+        id: report
+        run: |
+          set +e
+          bash hack/uboot-report.sh _out/overlay > _out/uboot-report.md; rc=$?
+          set -e
+          cat _out/uboot-report.md | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "rc=${rc}" >> "$GITHUB_OUTPUT"
+          mkdir -p _out/u-boot-configs
+          for d in _out/overlay/artifacts/arm64/u-boot/*/; do
+            b="$(basename "$d")"; cp "$d/u-boot.config" "_out/u-boot-configs/${b}.config"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: u-boot-configs
+          path: _out/u-boot-configs/
+          retention-days: 3
+      - name: Comment on the PR (updated in place)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          marker='<!-- sbc-quartz:uboot-report -->'
+          body="$(printf '%s\n%s\n\nFull configs: workflow artifact **u-boot-configs** on [this run](%s/%s/actions/runs/%s) (3 days).' \
+                  "${marker}" "$(cat _out/uboot-report.md)" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}")"
+          id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+                --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n1)"
+          if [ -n "${id}" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -f body="${body}" >/dev/null
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="${body}" >/dev/null
+          fi
+      - name: Fail if a board would get a random MAC
+        if: steps.report.outputs.rc != '0'
+        run: exit 1

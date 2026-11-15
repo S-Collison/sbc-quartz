@@ -90,10 +90,19 @@ For each board:
    Remove any other card or eMMC that has an old bootloader (boot order: SPI → eMMC → SD).
 2. Boot. On first boot, watch UART2 at **1500000 8N1**: U-Boot, then GRUB, then Talos.
    U-Boot derives a fixed MAC address from the chip's ID, so DHCP reservations keep working
-   across reboots and reinstalls. Check it once: at the U-Boot prompt `printenv ethaddr`
-   shows a value; after boot `talosctl -n <ip> get links end0 -o yaml | grep hardwareAddr`
-   (or `eth0`) shows the same address after a reboot. A different address every boot means
-   the MAC isn't being passed to Linux. Open an issue with the U-Boot log.
+   across reboots and reinstalls. No serial console is needed to check it. Once the node has
+   a config, read what U-Boot handed to Linux:
+   ```sh
+   talosctl -n <ip> read /sys/firmware/devicetree/base/serial-number; echo   # U-Boot read the chip ID
+   talosctl -n <ip> read /sys/firmware/devicetree/base/ethernet@fe010000/local-mac-address | xxd
+   talosctl -n <ip> get links -o yaml | grep -E '^ *(id|hardwareAddr):'        # same MAC after a reboot
+   ```
+   - both present, MAC stable: working;
+   - `serial-number` missing: U-Boot didn't fix up the device tree it passed on, so the MAC
+     can't get there either (boot path problem, not config);
+   - `serial-number` present but no `local-mac-address`: the MAC wasn't generated (config).
+   Each release (and each PR that changes U-Boot) carries a table of the U-Boot options per
+   board (`u-boot-report.md`, configs in `u-boot-configs.tar.gz`).
    The node appears in holzkube in maintenance mode.
 3. Provision it as **worker**: install disk = the disk you flashed, patches
    `registry-mirror`, `tuppr` (+ `drbd`).
