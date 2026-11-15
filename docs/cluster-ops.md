@@ -46,8 +46,8 @@ must pass:
 
 - pass → commit to `main`, close any open `auto-update` PR;
 - fail → force-push `auto/update-pins`, open/comment the `auto-update` PR with the run link,
-  and stop. Fix on that branch and merge. PR checks don't run on bot-pushed branches; push
-  any commit yourself (or close/reopen) to start them.
+  and stop. Fix on that branch and merge; the merge builds and releases it. PR checks are only
+  a quick lint (they don't build the overlay).
 
 Then, in the same run (and on every merge to `main` that touches build inputs):
 
