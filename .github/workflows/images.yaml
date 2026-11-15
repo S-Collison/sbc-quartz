@@ -43,6 +43,7 @@ permissions:
   contents: write
   packages: write
   issues: write
+  pull-requests: write # comment on the merged PR with the results
   id-token: write      # keyless cosign signatures (GitHub OIDC identity)
 
 concurrency:
@@ -336,6 +337,37 @@ jobs:
           files: dist/*
           # a tag always rebuilds; replace the assets of an existing release
           overwrite_files: true
+
+  # After the build, comment on the PR that was merged into this commit (if any) with
+  # the U-Boot option table and where to download the configs.
+  pr-comment:
+    needs: [resolve, overlay, images, images-media, release]
+    if: always() && needs.overlay.result == 'success'
+    runs-on: ubuntu-24.04-arm
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with: { name: release-u-boot, path: ub }
+      - run: |
+          set -euo pipefail
+          pr="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '[.[] | select(.merged_at != null)][0].number // empty')"
+          [ -n "${pr}" ] || { echo "no merged PR for ${GITHUB_SHA}"; exit 0; }
+          run="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          rel="${{ needs.resolve.outputs.release_tag }}"
+          {
+            echo "Build of this merge: [run ${GITHUB_RUN_ID}](${run}) — Talos \`${{ needs.resolve.outputs.talos }}\`${rel:+, release \`${rel}\`}."
+            echo
+            echo "| images (stock) | images (media) | release |"
+            echo "|---|---|---|"
+            echo "| ${{ needs.images.result }} | ${{ needs.images-media.result }} | ${{ needs.release.result }} |"
+            echo
+            cat ub/u-boot-report.md
+            echo
+            echo "U-Boot configs: artifact **u-boot-configs** on the run page (90 days), or \`gh run download ${GITHUB_RUN_ID} -n u-boot-configs\`."
+          } > body.md
+          gh pr comment "${pr}" --body-file body.md
 
   # Unattended runs (push/dispatch from track.yaml) report failures as an issue
   # instead of relying on someone reading the Actions tab. The media flavor is
