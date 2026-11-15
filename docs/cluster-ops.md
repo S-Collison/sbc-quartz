@@ -66,6 +66,17 @@ disable the track workflow (Actions → track → ⋯ → Disable).
 
 ### Building (`images.yaml`)
 
+**Manual builds of any upstream version** (betas, older releases, rebuilds): Actions →
+**images** → *Run workflow* on `main`, enter the upstream Talos tag (`v1.15.0-beta.1`,
+`v1.14.5`, …). It publishes a **prerelease `build-<talos>`** and pushes the installers as
+`talos-installer-<board>[-media]:<talos>`. Running it again for the same version deletes that
+release and its tag and publishes the new build in their place, so regenerate as often as you
+like. Untick *publish* for a test run that only keeps 7-day workflow artifacts. These builds
+never touch the `vX.Y.Z[-rN]` tags the tracker manages, never become the "latest" release, and
+report failures through the same `build-failure` issue.
+From the CLI: `gh workflow run images.yaml --ref main -f talos_version=v1.15.0-beta.1`.
+
+
 Runs on a `v*` tag (created by track, or pushed by you) or by hand. Failures on tag runs
 open/comment an issue labelled `build-failure`. Run by hand on a branch, it builds and
 uploads 7-day workflow artifacts without a release. It:

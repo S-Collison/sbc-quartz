@@ -39,7 +39,21 @@ steps:
             # Host tools: image signing needs the OpenSSL ENGINE API (gone from the toolchain's
             # OpenSSL) and mkeficapsule needs gnutls; neither is used for Rockchip boot images.
             ./scripts/config --file ${out}/.config --disable TOOLS_LIBCRYPTO --disable TOOLS_KWBIMAGE --disable TOOLS_MKEFICAPSULE
+            # Stable MAC address: misc_init_r() reads the CPU ID from the RK356x OTP, hashes it
+            # (SHA256) into ethaddr, and U-Boot writes it to the DT (ethernet0 alias) as
+            # local-mac-address, so Linux keeps the same MAC (and DHCP lease) on every boot.
+            # Without these the code is compiled out silently and the NIC gets a random MAC.
+            # ROCKCHIP_EFUSE must stay off: it takes precedence over OTP and RK356x has no eFuse.
+            ./scripts/config --file ${out}/.config \
+              --enable MISC --enable MISC_INIT_R --enable ROCKCHIP_OTP --disable ROCKCHIP_EFUSE \
+              --enable HASH --enable SHA256 \
+              --enable NET --enable CMD_NET --enable CMD_DHCP --enable DWC_ETH_QOS --enable DWC_ETH_QOS_ROCKCHIP
             make O=${out} olddefconfig
+            # fail the build if Kconfig dropped any of them (renamed symbol, unmet dependency)
+            for opt in MISC MISC_INIT_R ROCKCHIP_OTP HASH SHA256 NET CMD_NET DWC_ETH_QOS_ROCKCHIP; do
+              grep -qx "CONFIG_${opt}=y" ${out}/.config || { echo "${defconfig}: CONFIG_${opt} is not enabled"; exit 1; }
+            done
+            ! grep -qx "CONFIG_ROCKCHIP_EFUSE=y" ${out}/.config || { echo "${defconfig}: ROCKCHIP_EFUSE must be off"; exit 1; }
             make O=${out} -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" BL31="${BL31}" ROCKCHIP_TPL="${TPL}"
           fi
           test -s ${out}/u-boot-rockchip.bin

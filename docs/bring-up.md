@@ -89,6 +89,11 @@ For each board:
    `xz -dc talos-v1.14.5-soquartz-blade.raw.xz | sudo dd of=/dev/rdiskN bs=4m`
    Remove any other card or eMMC that has an old bootloader (boot order: SPI → eMMC → SD).
 2. Boot. On first boot, watch UART2 at **1500000 8N1**: U-Boot, then GRUB, then Talos.
+   U-Boot derives a fixed MAC address from the chip's ID, so DHCP reservations keep working
+   across reboots and reinstalls. Check it once: at the U-Boot prompt `printenv ethaddr`
+   shows a value; after boot `talosctl -n <ip> get links end0 -o yaml | grep hardwareAddr`
+   (or `eth0`) shows the same address after a reboot. A different address every boot means
+   the MAC isn't being passed to Linux. Open an issue with the U-Boot log.
    The node appears in holzkube in maintenance mode.
 3. Provision it as **worker**: install disk = the disk you flashed, patches
    `registry-mirror`, `tuppr` (+ `drbd`).
