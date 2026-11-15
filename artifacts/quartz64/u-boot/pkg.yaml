@@ -44,16 +44,26 @@ steps:
             # local-mac-address, so Linux keeps the same MAC (and DHCP lease) on every boot.
             # Without these the code is compiled out silently and the NIC gets a random MAC.
             # ROCKCHIP_EFUSE must stay off: it takes precedence over OTP and RK356x has no eFuse.
+            #
+            # U-Boot's own Ethernet driver must stay OFF on these boards: when U-Boot has
+            # initialised the GMAC, Linux sees heavy packet loss and may get no DHCP lease
+            # (bisected to U-Boot 25f56459aebc, still present in 2025.04; see the u-boot list
+            # thread "configs: rockchip: Enable ethernet driver on RK356x boards"). The MAC
+            # fixup above only needs NET, not a network driver.
             ./scripts/config --file ${out}/.config \
               --enable MISC --enable MISC_INIT_R --enable ROCKCHIP_OTP --disable ROCKCHIP_EFUSE \
-              --enable HASH --enable SHA256 \
-              --enable NET --enable CMD_NET --enable CMD_DHCP --enable DWC_ETH_QOS --enable DWC_ETH_QOS_ROCKCHIP
+              --enable HASH --enable SHA256 --enable NET \
+              --disable DWC_ETH_QOS --disable DWC_ETH_QOS_ROCKCHIP \
+              --disable PHY_MOTORCOMM --disable PHY_REALTEK \
+              --disable CMD_NET --disable CMD_DHCP
             make O=${out} olddefconfig
             # fail the build if Kconfig dropped any of them (renamed symbol, unmet dependency)
-            for opt in MISC MISC_INIT_R ROCKCHIP_OTP HASH SHA256 NET CMD_NET DWC_ETH_QOS_ROCKCHIP; do
+            for opt in MISC MISC_INIT_R ROCKCHIP_OTP HASH SHA256 NET; do
               grep -qx "CONFIG_${opt}=y" ${out}/.config || { echo "${defconfig}: CONFIG_${opt} is not enabled"; exit 1; }
             done
-            ! grep -qx "CONFIG_ROCKCHIP_EFUSE=y" ${out}/.config || { echo "${defconfig}: ROCKCHIP_EFUSE must be off"; exit 1; }
+            for opt in ROCKCHIP_EFUSE DWC_ETH_QOS DWC_ETH_QOS_ROCKCHIP; do
+              ! grep -qx "CONFIG_${opt}=y" ${out}/.config || { echo "${defconfig}: CONFIG_${opt} must be off"; exit 1; }
+            done
             make O=${out} -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" BL31="${BL31}" ROCKCHIP_TPL="${TPL}"
           fi
           test -s ${out}/u-boot-rockchip.bin
