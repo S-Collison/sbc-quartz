@@ -101,10 +101,6 @@ For each board:
    - `serial-number` missing: U-Boot didn't fix up the device tree it passed on, so the MAC
      can't get there either (boot path problem, not config);
    - `serial-number` present but no `local-mac-address`: the MAC wasn't generated (config).
-   Every build's final U-Boot configs are downloadable from its run page: artifact
-   **u-boot-configs** (`<board>.config` full, `<board>_defconfig` minimal, `u-boot-report.md`).
-   Kept 90 days. Releases also carry them as `u-boot-configs.tar.gz`, and the build comments
-   on the merged PR with the option table and the download link.
    The node appears in holzkube in maintenance mode.
 3. Provision it as **worker**: install disk = the disk you flashed, patches
    `registry-mirror`, `tuppr` (+ `drbd`).

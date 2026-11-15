@@ -66,12 +66,6 @@ disable the track workflow (Actions → track → ⋯ → Disable).
 
 ### Building (`images.yaml`)
 
-**U-Boot configs of a build:** every run's page has the artifact **u-boot-configs** with each
-board's final `.config` and minimal `_defconfig` (90 days), and the run summary shows the
-MAC/network option table. The build also comments on the PR that was merged with the table,
-the results and that link. Download with
-`gh run download <run-id> -n u-boot-configs`.
-
 **Manual builds of any upstream version** (betas, older releases, rebuilds): Actions →
 **images** → *Run workflow* on `main`, enter the upstream Talos tag (`v1.15.0-beta.1`,
 `v1.14.5`, …). It publishes a **prerelease `build-<talos>`** and pushes the installers as

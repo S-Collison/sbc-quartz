@@ -43,7 +43,6 @@ permissions:
   contents: write
   packages: write
   issues: write
-  pull-requests: write # comment on the merged PR with the results
   id-token: write      # keyless cosign signatures (GitHub OIDC identity)
 
 concurrency:
@@ -119,38 +118,6 @@ jobs:
             PLATFORM=linux/arm64,linux/amd64 \
             PKGS="${{ needs.resolve.outputs.pkgs }}" \
             TARGET_ARGS="--tag=${REGISTRY}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }} --push=true"
-      - uses: imjasonh/setup-crane@v0.7
-      - name: U-Boot configs from the pushed overlay
-        run: |
-          set -euo pipefail
-          mkdir -p _out/overlay _out/rel
-          crane export --platform linux/arm64 \
-            "${REGISTRY}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }}" - \
-            | tar x -C _out/overlay artifacts/arm64/u-boot
-          set +e; bash hack/uboot-report.sh _out/overlay > _out/rel/u-boot-report.md; rc=$?; set -e
-          cat _out/rel/u-boot-report.md >> "$GITHUB_STEP_SUMMARY"
-          tar -C _out/overlay/artifacts/arm64/u-boot -czf _out/rel/u-boot-configs.tar.gz --wildcards '*/u-boot.config' '*/u-boot.defconfig'
-          # the same files unpacked, for the downloadable workflow artifact
-          mkdir -p _out/u-boot-configs
-          for d in _out/overlay/artifacts/arm64/u-boot/*/; do
-            b="$(basename "$d")"
-            cp "$d/u-boot.config" "_out/u-boot-configs/${b}.config"
-            cp "$d/u-boot.defconfig" "_out/u-boot-configs/${b}_defconfig"
-          done
-          cp _out/rel/u-boot-report.md _out/u-boot-configs/
-          [ "${rc}" = 0 ] || { echo "::error::a board would boot with a random MAC address (see the summary)"; exit 1; }
-      # downloadable from the run page: per board <board>.config (full) and <board>_defconfig (minimal)
-      - uses: actions/upload-artifact@v7
-        with:
-          name: u-boot-configs
-          path: _out/u-boot-configs/
-          retention-days: 90
-      # for the release job only (attached to the release as u-boot-configs.tar.gz)
-      - uses: actions/upload-artifact@v7
-        with:
-          name: release-u-boot
-          path: _out/rel/
-          retention-days: 7
 
   media-kernel:
     needs: resolve
@@ -297,8 +264,6 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with: { path: dist, pattern: "image-*", merge-multiple: true }
-      - uses: actions/download-artifact@v8
-        with: { path: dist, name: release-u-boot }
       - name: Notes
         env:
           MEDIA_RESULT: ${{ needs.images-media.result }}
@@ -315,10 +280,7 @@ jobs:
           | SOQuartz + Model-A | \`talos-${t}-soquartz-model-a.raw.xz\` | \`talos-${t}-soquartz-model-a-media.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-soquartz-model-a[-media]:${t}\` |
 
           Flash: \`xz -dc <image> | sudo dd of=/dev/rdiskN bs=4m\`. Serial: UART2, 1500000 8N1. Bring-up: docs/bring-up.md.
-          Resolved U-Boot configs for every board: \`u-boot-configs.tar.gz\`.
-
           NOTES
-          [ -f dist/u-boot-report.md ] && cat dist/u-boot-report.md >> notes.md
           ls -la dist
       - name: Replace an earlier manual build of this version
         if: needs.resolve.outputs.manual == 'true'
@@ -337,37 +299,6 @@ jobs:
           files: dist/*
           # a tag always rebuilds; replace the assets of an existing release
           overwrite_files: true
-
-  # After the build, comment on the PR that was merged into this commit (if any) with
-  # the U-Boot option table and where to download the configs.
-  pr-comment:
-    needs: [resolve, overlay, images, images-media, release]
-    if: always() && needs.overlay.result == 'success'
-    runs-on: ubuntu-24.04-arm
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-    steps:
-      - uses: actions/download-artifact@v8
-        with: { name: release-u-boot, path: ub }
-      - run: |
-          set -euo pipefail
-          pr="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '[.[] | select(.merged_at != null)][0].number // empty')"
-          [ -n "${pr}" ] || { echo "no merged PR for ${GITHUB_SHA}"; exit 0; }
-          run="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          rel="${{ needs.resolve.outputs.release_tag }}"
-          {
-            echo "Build of this merge: [run ${GITHUB_RUN_ID}](${run}) — Talos \`${{ needs.resolve.outputs.talos }}\`${rel:+, release \`${rel}\`}."
-            echo
-            echo "| images (stock) | images (media) | release |"
-            echo "|---|---|---|"
-            echo "| ${{ needs.images.result }} | ${{ needs.images-media.result }} | ${{ needs.release.result }} |"
-            echo
-            cat ub/u-boot-report.md
-            echo
-            echo "U-Boot configs: artifact **u-boot-configs** on the run page (90 days), or \`gh run download ${GITHUB_RUN_ID} -n u-boot-configs\`."
-          } > body.md
-          gh pr comment "${pr}" --body-file body.md
 
   # Unattended runs (push/dispatch from track.yaml) report failures as an issue
   # instead of relying on someone reading the Actions tab. The media flavor is

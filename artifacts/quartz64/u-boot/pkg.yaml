@@ -55,8 +55,6 @@ steps:
             done
             ! grep -qx "CONFIG_ROCKCHIP_EFUSE=y" ${out}/.config || { echo "${defconfig}: ROCKCHIP_EFUSE must be off"; exit 1; }
             make O=${out} -j $(nproc) HOSTLDLIBS_mkimage="-lssl -lcrypto" BL31="${BL31}" ROCKCHIP_TPL="${TPL}"
-            # minimal, diffable form of the final config (only what differs from Kconfig defaults)
-            make O=${out} savedefconfig
           fi
           test -s ${out}/u-boot-rockchip.bin
         done
@@ -66,10 +64,6 @@ steps:
           IFS=: read -r name defconfig dtb <<< "${entry}"
           mkdir -p /rootfs/artifacts/arm64/u-boot/${name}
           cp build/${defconfig}/u-boot-rockchip.bin /rootfs/artifacts/arm64/u-boot/${name}/
-          # the resolved config, so CI (hack/uboot-report.sh) and anyone with the overlay
-          # image can see exactly what was built without a serial console
-          cp build/${defconfig}/.config /rootfs/artifacts/arm64/u-boot/${name}/u-boot.config
-          cp build/${defconfig}/defconfig /rootfs/artifacts/arm64/u-boot/${name}/u-boot.defconfig
           if [ -s build/${defconfig}/u-boot-rockchip-spi.bin ]; then
             cp build/${defconfig}/u-boot-rockchip-spi.bin /rootfs/artifacts/arm64/u-boot/${name}/
           fi
