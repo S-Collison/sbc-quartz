@@ -128,11 +128,26 @@ jobs:
             | tar x -C _out/overlay artifacts/arm64/u-boot
           set +e; bash hack/uboot-report.sh _out/overlay > _out/rel/u-boot-report.md; rc=$?; set -e
           cat _out/rel/u-boot-report.md >> "$GITHUB_STEP_SUMMARY"
-          tar -C _out/overlay/artifacts/arm64/u-boot -czf _out/rel/u-boot-configs.tar.gz --wildcards '*/u-boot.config'
+          tar -C _out/overlay/artifacts/arm64/u-boot -czf _out/rel/u-boot-configs.tar.gz --wildcards '*/u-boot.config' '*/u-boot.defconfig'
+          # the same files unpacked, for the downloadable workflow artifact
+          mkdir -p _out/u-boot-configs
+          for d in _out/overlay/artifacts/arm64/u-boot/*/; do
+            b="$(basename "$d")"
+            cp "$d/u-boot.config" "_out/u-boot-configs/${b}.config"
+            cp "$d/u-boot.defconfig" "_out/u-boot-configs/${b}_defconfig"
+          done
+          cp _out/rel/u-boot-report.md _out/u-boot-configs/
           [ "${rc}" = 0 ] || { echo "::error::a board would boot with a random MAC address (see the summary)"; exit 1; }
+      # downloadable from the run page: per board <board>.config (full) and <board>_defconfig (minimal)
       - uses: actions/upload-artifact@v7
         with:
           name: u-boot-configs
+          path: _out/u-boot-configs/
+          retention-days: 90
+      # for the release job only (attached to the release as u-boot-configs.tar.gz)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-u-boot
           path: _out/rel/
           retention-days: 7
 
@@ -280,7 +295,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/download-artifact@v8
-        with: { path: dist, merge-multiple: true }
+        with: { path: dist, pattern: "image-*", merge-multiple: true }
+      - uses: actions/download-artifact@v8
+        with: { path: dist, name: release-u-boot }
       - name: Notes
         env:
           MEDIA_RESULT: ${{ needs.images-media.result }}
