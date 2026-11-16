@@ -164,9 +164,12 @@ local board="$1" W="${OUT}/.work-netboot" T="${OUT}/netboot-${FLAVOR}"
 rm -rf "${W}" "${T}"; mkdir -p "${W}/k" "${W}/i" "${W}/c" "${T}/talos/${FLAVOR}/dtb" "${T}/pxelinux.cfg"
 local common=(--arch arm64 --overlay-image "${OVERLAY_IMAGE}" --overlay-name "${board}" ${EXT_ARGS[@]+"${EXT_ARGS[@]}"})
 echo ">> [${FLAVOR}] netboot assets"
-imager "${W}/k" "${board}" --output-kind kernel    "${common[@]}" || return 1
-imager "${W}/i" "${board}" --output-kind initramfs "${common[@]}" || return 1
-imager "${W}/c" "${board}" --output-kind cmdline   "${common[@]}" || return 1
+# Built from the "iso" profile, not the board profile: only these outputs are taken from it,
+# and its output format is raw. The board profile's .xz output format would be applied to
+# them too (compressing the kernel, and failing on the already-.xz initramfs since 1.15).
+imager "${W}/k" iso --output-kind kernel    "${common[@]}" || return 1
+imager "${W}/i" iso --output-kind initramfs "${common[@]}" || return 1
+imager "${W}/c" iso --output-kind cmdline   "${common[@]}" || return 1
 local kern init cmd
 kern="$(ls "${W}"/k/* | head -n1)"; init="$(ls "${W}"/i/* | head -n1)"; cmd="$(ls "${W}"/c/* | head -n1)"
 python3 hack/zboot-extract.py "${kern}" "${T}/talos/${FLAVOR}/Image" || return 1
