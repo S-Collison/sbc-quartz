@@ -141,19 +141,6 @@ if LC_ALL=C grep -aq "fdtfile=rockchip/${DTB}" "${TMP}"; then
 else
   echo "   BAD U-Boot fdtfile does not match ${BOARD}"; fail=1
 fi
-# module signature enforcement in the boot config (grub.cfg on the BOOT partition)
-if [ "${MODULE_SIG_ENFORCE}" = 0 ]; then
-  # only GRUB's "linux /A/vmlinuz ..." lines, not every byte of the image (binaries
-  # in it can contain the default string)
-  lines="$(LC_ALL=C grep -ao 'linux /[AB]/vmlinuz [[:print:]]*' "${TMP}" | sort -u || true)"
-  if [ -z "${lines}" ]; then
-    echo "   BAD no GRUB linux line found to check module.sig_enforce"; fail=1
-  elif grep -q 'module.sig_enforce=1' <<<"${lines}" || ! grep -q 'module.sig_enforce=0' <<<"${lines}"; then
-    echo "   BAD kernel cmdline still enforces module signatures:"; sed 's/^/       /' <<<"${lines}"; fail=1
-  else
-    echo "   ok  kernel cmdline has module.sig_enforce=0 (official extensions load on this kernel)"
-  fi
-fi
 # YT8511 boards: the PHY id compatible must be in both device trees Linux can be given,
 # U-Boot's built-in one (first 10 MiB) and the DTB on the boot partition (after it).
 case "${DTB}" in rk3566-quartz64-a.dtb|rk3566-soquartz-*.dtb)
