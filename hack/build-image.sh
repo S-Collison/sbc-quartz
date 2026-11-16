@@ -37,6 +37,15 @@ EXTENSIONS="${EXTENSIONS:-}"
 EXTENSION_IMAGES="${EXTENSION_IMAGES:-}"
 INSTALLER_REPO="${INSTALLER_REPO:-}"
 NETBOOT="${NETBOOT:-0}"
+# MODULE_SIG_ENFORCE=0: drop Talos's module.sig_enforce=1 so official Sidero extensions
+# (signed with Sidero's key) load on our own kernel. Only the disk image and netboot
+# cmdline carry kernel args; the installer rebuilds the cmdline on every upgrade, so
+# nodes need machine.install.extraKernelArgs: ["-module.sig_enforce"].
+MODULE_SIG_ENFORCE="${MODULE_SIG_ENFORCE:-1}"
+KARGS=()
+if [ "${MODULE_SIG_ENFORCE}" = 0 ]; then
+  KARGS=(--extra-kernel-arg=-module.sig_enforce --extra-kernel-arg=module.sig_enforce=0)
+fi
 OUT="${PWD}/_out"
 CRANE="gcr.io/go-containerregistry/crane:latest"
 
@@ -48,7 +57,6 @@ case "${FLAVOR}" in
   media)
     IMAGER_IMAGE="${IMAGER_IMAGE:-ghcr.io/s-collison/talos-media/imager:${TALOS_VERSION}}"
     BASE_INSTALLER_IMAGE="${BASE_INSTALLER_IMAGE:-ghcr.io/s-collison/talos-media/installer-base:${TALOS_VERSION}}"
-    [ -z "${EXTENSIONS}" ] || { echo "FLAVOR=media: use EXTENSION_IMAGES (rebuilt for the media kernel), not EXTENSIONS" >&2; exit 1; }
     SUFFIX="-media" ;;
   *) echo "FLAVOR must be stock or media" >&2; exit 1 ;;
 esac
@@ -97,7 +105,7 @@ DTB="${ENTRY##*:}"
 WORK="${OUT}/.work-${BOARD}"; rm -rf "${WORK}"
 
 echo ">> [${FLAVOR}] imager ${IMAGER_IMAGE}  overlay ${OVERLAY_IMAGE}  board ${BOARD}"
-imager "${WORK}" "${BOARD}" --arch arm64 \
+imager "${WORK}" "${BOARD}" --arch arm64 ${KARGS[@]+"${KARGS[@]}"} \
   --overlay-image "${OVERLAY_IMAGE}" --overlay-name "${BOARD}" \
   ${EXT_ARGS[@]+"${EXT_ARGS[@]}"} || return 1
 
@@ -132,6 +140,14 @@ if LC_ALL=C grep -aq "fdtfile=rockchip/${DTB}" "${TMP}"; then
   echo "   ok  U-Boot fdtfile matches ${BOARD}"
 else
   echo "   BAD U-Boot fdtfile does not match ${BOARD}"; fail=1
+fi
+# module signature enforcement in the boot config (grub.cfg on the BOOT partition)
+if [ "${MODULE_SIG_ENFORCE}" = 0 ]; then
+  if LC_ALL=C grep -aq 'module.sig_enforce=0' "${TMP}" && ! LC_ALL=C grep -aq 'module.sig_enforce=1' "${TMP}"; then
+    echo "   ok  kernel cmdline has module.sig_enforce=0 (official extensions load on this kernel)"
+  else
+    echo "   BAD kernel cmdline still enforces module signatures"; fail=1
+  fi
 fi
 # YT8511 boards: the PHY id compatible must be in both device trees Linux can be given,
 # U-Boot's built-in one (first 10 MiB) and the DTB on the boot partition (after it).
@@ -187,7 +203,7 @@ echo ">> [${FLAVOR}] netboot assets"
 # them too (compressing the kernel, and failing on the already-.xz initramfs since 1.15).
 imager "${W}/k" iso --output-kind kernel    "${common[@]}" || return 1
 imager "${W}/i" iso --output-kind initramfs "${common[@]}" || return 1
-imager "${W}/c" iso --output-kind cmdline   "${common[@]}" || return 1
+imager "${W}/c" iso --output-kind cmdline   "${common[@]}" ${KARGS[@]+"${KARGS[@]}"} || return 1
 local kern init cmd
 kern="$(ls "${W}"/k/* | head -n1)"; init="$(ls "${W}"/i/* | head -n1)"; cmd="$(ls "${W}"/c/* | head -n1)"
 python3 hack/zboot-extract.py "${kern}" "${T}/talos/${FLAVOR}/Image" || return 1

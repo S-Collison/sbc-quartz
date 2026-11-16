@@ -62,6 +62,7 @@ jobs:
       overlay_tag: ${{ steps.v.outputs.overlay_tag }}
       release_tag: ${{ steps.v.outputs.release_tag }}
       manual: ${{ steps.v.outputs.manual }}
+      custom_base: ${{ steps.v.outputs.custom_base }}
       owner: ${{ steps.v.outputs.owner }}
       media: ${{ steps.v.outputs.media }}
       netboot: ${{ steps.v.outputs.netboot }}
@@ -94,9 +95,15 @@ jobs:
           pkgs="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/talos/${talos}/Makefile" \
                   | sed -nE 's/^PKGS \?= *(.*)$/\1/p' | head -n1)"
           [ -n "${pkgs}" ] || { echo "::error::could not find PKGS in the Talos ${talos} Makefile"; exit 1; }
+          # Does that release's kernel have the Motorcomm YT8511 PHY driver (Quartz64 A / SOQuartz
+          # Ethernet)? The 1.14 series doesn't; then the regular images use our "base" kernel.
+          sha="$(gh api "repos/siderolabs/pkgs/commits/${pkgs##*-g}" --jq .sha)"
+          kcfg="$(curl -fsSL "https://raw.githubusercontent.com/siderolabs/pkgs/${sha}/kernel/build/config-arm64")"
+          if grep -qx 'CONFIG_MOTORCOMM_PHY=y' <<<"${kcfg}"; then custom_base=false; else custom_base=true; fi
+          echo "Talos ${talos} kernel (pkgs ${pkgs}) has CONFIG_MOTORCOMM_PHY=y: $([ "${custom_base}" = false ] && echo yes || echo no)"
           {
             echo "talos=${talos}"; echo "pkgs=${pkgs}"
-            echo "overlay_tag=${overlay_tag}"; echo "release_tag=${release_tag}"; echo "manual=${manual}"
+            echo "overlay_tag=${overlay_tag}"; echo "release_tag=${release_tag}"; echo "manual=${manual}"; echo "custom_base=${custom_base}"
             echo "owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
             echo "media=${MEDIA}"; echo "netboot=${NETBOOT:-false}"
           } | tee -a "$GITHUB_OUTPUT"
@@ -119,6 +126,18 @@ jobs:
             PKGS="${{ needs.resolve.outputs.pkgs }}" \
             TARGET_ARGS="--tag=${REGISTRY}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }} --push=true"
 
+  # Our kernel for the regular images, only when the release's own kernel lacks the
+  # YT8511 PHY driver (1.14 series): Sidero's config + kernel/base.config, no V4L/Hantro.
+  base-kernel:
+    needs: resolve
+    if: needs.resolve.outputs.custom_base == 'true'
+    uses: ./.github/workflows/media-kernel.yaml
+    with:
+      talos: ${{ needs.resolve.outputs.talos }}
+      pkgs: ${{ needs.resolve.outputs.pkgs }}
+      flavor: base
+    secrets: inherit
+
   media-kernel:
     needs: resolve
     if: needs.resolve.outputs.media == 'true'
@@ -126,6 +145,7 @@ jobs:
     with:
       talos: ${{ needs.resolve.outputs.talos }}
       pkgs: ${{ needs.resolve.outputs.pkgs }}
+      flavor: media
     secrets: inherit
 
   # Groundwork for a self-hosted Image Factory: official overlay catalog + our
@@ -172,7 +192,11 @@ jobs:
 
   images:
     name: images (stock)
-    needs: [resolve, overlay]
+    needs: [resolve, overlay, base-kernel]
+    # base-kernel is skipped when the release's kernel already has the PHY driver
+    if: >-
+      always() && needs.resolve.result == 'success' && needs.overlay.result == 'success' &&
+      (needs.base-kernel.result == 'success' || needs.base-kernel.result == 'skipped')
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     strategy:
@@ -188,7 +212,12 @@ jobs:
         env:
           TALOS_VERSION: ${{ needs.resolve.outputs.talos }}
           FLAVOR: stock
+          # Official extensions. With custom_base, our base kernel's imager/installer-base and
+          # module signature enforcement off, so Sidero-signed extension modules load on it.
           EXTENSIONS: drbd
+          IMAGER_IMAGE: ${{ needs.resolve.outputs.custom_base == 'true' && format('{0}/{1}/talos-base/imager:{2}', env.REGISTRY, needs.resolve.outputs.owner, needs.resolve.outputs.talos) || '' }}
+          BASE_INSTALLER_IMAGE: ${{ needs.resolve.outputs.custom_base == 'true' && format('{0}/{1}/talos-base/installer-base:{2}', env.REGISTRY, needs.resolve.outputs.owner, needs.resolve.outputs.talos) || '' }}
+          MODULE_SIG_ENFORCE: ${{ needs.resolve.outputs.custom_base == 'true' && '0' || '1' }}
           OVERLAY_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }}
           INSTALLER_REPO: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-installer
         run: |
@@ -234,7 +263,9 @@ jobs:
           INSTALLER_REPO: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-installer
           IMAGER_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-media/imager:${{ needs.resolve.outputs.talos }}
           BASE_INSTALLER_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-media/installer-base:${{ needs.resolve.outputs.talos }}
-          EXTENSION_IMAGES: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-media/drbd:${{ needs.resolve.outputs.talos }}
+          # our kernel: official extensions with module signature enforcement off
+          EXTENSIONS: drbd
+          MODULE_SIG_ENFORCE: "0"
         run: |
           if [ "${{ needs.resolve.outputs.netboot }}" = true ] && [ "${{ matrix.board }}" = quartz64-a ]; then export NETBOOT=1; fi
           bash hack/build-image.sh "${{ matrix.board }}"
@@ -304,7 +335,7 @@ jobs:
   # instead of relying on someone reading the Actions tab. The media flavor is
   # optional, so its failure is reported too, without failing the release.
   report:
-    needs: [resolve, overlay, media-kernel, images, images-media, release]
+    needs: [resolve, overlay, base-kernel, media-kernel, images, images-media, release]
     if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
     runs-on: ubuntu-24.04-arm
     env:
