@@ -23,6 +23,15 @@ steps:
     prepare:
       - |
         tar xf u-boot.tar.gz --strip-components=1
+        # Same YT8511 PHY fix as artifacts/quartz64/dtb, in U-Boot's built-in device tree:
+        # when U-Boot can't load /dtb/<fdtfile> from the boot partition, it passes this one
+        # to Linux instead, and Linux would bind "Generic PHY" again.
+        for f in dts/upstream/src/arm64/rockchip/rk3566-soquartz.dtsi dts/upstream/src/arm64/rockchip/rk3566-quartz64-a.dts; do
+          n="$(grep -c 'compatible = "ethernet-phy-ieee802.3-c22";' "${f}" || true)"
+          [ "${n}" = 1 ] || { echo "${f}: expected 1 generic PHY compatible, found ${n}"; exit 1; }
+          sed -i 's/compatible = "ethernet-phy-ieee802.3-c22";/compatible = "ethernet-phy-id0000.010a", "ethernet-phy-ieee802.3-c22";/' "${f}"
+          grep -q 'ethernet-phy-id0000.010a' "${f}" || { echo "${f}: patch not applied"; exit 1; }
+        done
     build:
       - |
         BL31=/libs/arm-trusted-firmware/rk3568/bl31.elf

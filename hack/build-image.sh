@@ -133,6 +133,24 @@ if LC_ALL=C grep -aq "fdtfile=rockchip/${DTB}" "${TMP}"; then
 else
   echo "   BAD U-Boot fdtfile does not match ${BOARD}"; fail=1
 fi
+# YT8511 boards: the PHY id compatible must be in both device trees Linux can be given,
+# U-Boot's built-in one (first 10 MiB) and the DTB on the boot partition (after it).
+case "${DTB}" in rk3566-quartz64-a.dtb|rk3566-soquartz-*.dtb)
+  dd if="${TMP}" of="${TMP}.ub" bs=1M count=10 2>/dev/null
+  dd if="${TMP}" of="${TMP}.rest" bs=1M skip=10 2>/dev/null
+  if LC_ALL=C grep -aq 'ethernet-phy-id0000.010a' "${TMP}.ub"; then
+    echo "   ok  YT8511 PHY compatible in U-Boot's device tree"
+  else
+    echo "   BAD U-Boot's device tree lacks the YT8511 PHY compatible (Linux would bind Generic PHY)"; fail=1
+  fi
+  if LC_ALL=C grep -aq 'ethernet-phy-id0000.010a' "${TMP}.rest"; then
+    echo "   ok  YT8511 PHY compatible in the boot partition DTB"
+  else
+    echo "   BAD boot partition DTB lacks the YT8511 PHY compatible (Linux would bind Generic PHY)"; fail=1
+  fi
+  rm -f "${TMP}.ub" "${TMP}.rest"
+  ;;
+esac
 if LC_ALL=C grep -aq 'pxelinux.cfg' "${TMP}"; then
   echo "   info U-Boot can PXE boot (upstream default; local disks are tried first)"
 fi
