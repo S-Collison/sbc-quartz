@@ -43,7 +43,9 @@ steps:
             { print }
             END { if (n != 1) { print FILENAME ": expected 1 generic PHY compatible, found " n > "/dev/stderr"; exit 1 } }' w.dts > w2.dts
           "${DTC}" -q -I dts -O dtb -o "out/${dtb}" w2.dts
-          "${DTC}" -q -I dtb -O dts "out/${dtb}" | grep -q 'ethernet-phy-id0000.010a' || { echo "${dtb}: patch not applied"; exit 1; }
+          # decompile to a file: piping into grep -q would SIGPIPE dtc and fail under pipefail
+          "${DTC}" -q -I dtb -O dts -o check.dts "out/${dtb}"
+          grep -q 'ethernet-phy-id0000.010a' check.dts || { echo "${dtb}: patch not applied"; exit 1; }
           echo "patched ${dtb}: YT8511 PHY id compatible"
         done
     install:
