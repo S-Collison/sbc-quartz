@@ -143,10 +143,15 @@ else
 fi
 # module signature enforcement in the boot config (grub.cfg on the BOOT partition)
 if [ "${MODULE_SIG_ENFORCE}" = 0 ]; then
-  if LC_ALL=C grep -aq 'module.sig_enforce=0' "${TMP}" && ! LC_ALL=C grep -aq 'module.sig_enforce=1' "${TMP}"; then
-    echo "   ok  kernel cmdline has module.sig_enforce=0 (official extensions load on this kernel)"
+  # only GRUB's "linux /A/vmlinuz ..." lines, not every byte of the image (binaries
+  # in it can contain the default string)
+  lines="$(LC_ALL=C grep -ao 'linux /[AB]/vmlinuz [[:print:]]*' "${TMP}" | sort -u || true)"
+  if [ -z "${lines}" ]; then
+    echo "   BAD no GRUB linux line found to check module.sig_enforce"; fail=1
+  elif grep -q 'module.sig_enforce=1' <<<"${lines}" || ! grep -q 'module.sig_enforce=0' <<<"${lines}"; then
+    echo "   BAD kernel cmdline still enforces module signatures:"; sed 's/^/       /' <<<"${lines}"; fail=1
   else
-    echo "   BAD kernel cmdline still enforces module signatures"; fail=1
+    echo "   ok  kernel cmdline has module.sig_enforce=0 (official extensions load on this kernel)"
   fi
 fi
 # YT8511 boards: the PHY id compatible must be in both device trees Linux can be given,
