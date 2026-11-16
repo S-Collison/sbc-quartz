@@ -1,0 +1,55 @@
+# Rockchip DTBs from the kernel Talos boots (PKGS, set per Talos release), installed as
+#   /rootfs/artifacts/arm64/dtb/rockchip/*.dtb
+# with one fix for the boards whose Ethernet PHY is a Motorcomm YT8511 (Quartz64 A, SOQuartz):
+# their PHY node only has the generic "ethernet-phy-ieee802.3-c22" compatible, Linux then
+# binds "Generic PHY" instead of the YT8511 driver, and the link comes up but passes no
+# traffic. Adding the PHY's ID (0x0000010a) as the first compatible makes Linux bind the
+# YT8511 driver without having to read the ID. dtc is built from the U-Boot source.
+name: dtb-quartz64
+variant: scratch
+shell: /bin/bash
+dependencies:
+  - stage: base
+  - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/kernel:{{ .BUILD_ARG_PKGS }}"
+    platform: linux/arm64
+    from: /dtb/rockchip
+    to: /dtb-in
+steps:
+  - sources:
+      - url: https://github.com/u-boot/u-boot/archive/refs/tags/v{{ .uboot_version }}.tar.gz
+        destination: u-boot.tar.gz
+        sha256: "{{ .uboot_sha256 }}"
+        sha512: "{{ .uboot_sha512 }}"
+    prepare:
+      - |
+        tar xf u-boot.tar.gz --strip-components=1
+    build:
+      - |
+        make O=build/dtc quartz64-a-rk3566_defconfig
+        make O=build/dtc scripts_dtc
+        DTC=build/dtc/scripts/dtc/dtc
+        test -x "${DTC}" || { echo "dtc not built"; exit 1; }
+
+        mkdir -p out
+        cp -a /dtb-in/. out/
+        # boards with a YT8511 PHY (Quartz64 B has a Realtek PHY and is left alone)
+        for dtb in rk3566-quartz64-a.dtb rk3566-soquartz-blade.dtb rk3566-soquartz-model-a.dtb rk3566-soquartz-cm4.dtb; do
+          test -f "out/${dtb}" || { echo "missing ${dtb} in kernel DTBs"; exit 1; }
+          "${DTC}" -q -I dtb -O dts -o w.dts "out/${dtb}"
+          awk -v id='"ethernet-phy-id0000.010a", "ethernet-phy-ieee802.3-c22"' '
+            /ethernet-phy@0 \{/ { inphy=1 }
+            inphy && /compatible = "ethernet-phy-ieee802.3-c22";/ { sub(/"ethernet-phy-ieee802.3-c22"/, id); n++; inphy=0 }
+            inphy && /^[ \t]*};/ { inphy=0 }
+            { print }
+            END { if (n != 1) { print FILENAME ": expected 1 generic PHY compatible, found " n > "/dev/stderr"; exit 1 } }' w.dts > w2.dts
+          "${DTC}" -q -I dts -O dtb -o "out/${dtb}" w2.dts
+          "${DTC}" -q -I dtb -O dts "out/${dtb}" | grep -q 'ethernet-phy-id0000.010a' || { echo "${dtb}: patch not applied"; exit 1; }
+          echo "patched ${dtb}: YT8511 PHY id compatible"
+        done
+    install:
+      - |
+        mkdir -p /rootfs/artifacts/arm64/dtb/rockchip
+        cp -a out/. /rootfs/artifacts/arm64/dtb/rockchip/
+finalize:
+  - from: /rootfs
+    to: /rootfs
