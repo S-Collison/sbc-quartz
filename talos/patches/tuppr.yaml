@@ -1,9 +1,0 @@
-# Lets tuppr (running in system-upgrade) call the Talos API to upgrade nodes.
-machine:
-  features:
-    kubernetesTalosAPIAccess:
-      enabled: true
-      allowedRoles:
-        - os:admin
-      allowedKubernetesNamespaces:
-        - system-upgrade
