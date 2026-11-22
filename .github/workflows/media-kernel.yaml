@@ -98,7 +98,7 @@ jobs:
         run: |
           # Marker tag keyed on the config fragment (+ module resolver for media) and the Talos patch
           # below (TALOS_PATCH), so changing any of them rebuilds the imager/installer-base.
-          TALOS_PATCH=no-sig-enforce-default-v1
+          TALOS_PATCH=no-sig-enforce-default-v1+dashboard-off-v1
           if [ "${{ inputs.flavor }}" = media ]; then
             mkey="$({ bash hack/kernel-fragment.sh media; cat hack/media-modules.py; echo "${TALOS_PATCH}"; } | sha256sum | cut -c1-12)"
           else
@@ -127,6 +127,21 @@ jobs:
           sed -i '/constants.KernelParamEnforceModuleSigVerify+"=1"/d' "${f}"
           if grep -q 'KernelParamEnforceModuleSigVerify+"=1"' "${f}"; then echo "::error::sig_enforce default still present"; exit 1; fi
           grep -n -A2 'SupportsDisablingModuleSignatureVerification' "${f}"
+      - name: Turn the Talos dashboard off by default (installer + imager)
+        if: steps.have.outputs.skip != 'true'
+        # The boards are headless and the dashboard costs 5-6 % of a core each. Talos will not stop it
+        # at runtime and UnattendedInstallConfig has no kernel arguments, so it has to be a default here:
+        # the installer rebuilds the cmdline from kernel.DefaultArgs on every install/upgrade.
+        # Fails if the line is not found exactly once, so a Talos change is noticed, not ignored.
+        run: |
+          set -euo pipefail
+          f=_talos/pkg/machinery/kernel/kernel.go
+          n="$(grep -c '^[[:space:]]*"consoleblank=0",$' "${f}" || true)"
+          [ "${n}" = 1 ] || { echo "::error::expected 1 consoleblank default in ${f}, found ${n}"; exit 1; }
+          sed -i 's/^\([[:space:]]*\)"consoleblank=0",$/&\n\1constants.KernelParamDashboardDisabled+"=1",/' "${f}"
+          n="$(grep -c 'constants.KernelParamDashboardDisabled+"=1",' "${f}" || true)"
+          [ "${n}" = 1 ] || { echo "::error::dashboard default not added"; exit 1; }
+          grep -n 'KernelParamDashboardDisabled' _talos/pkg/machinery/constants/constants.go
       - name: Add media modules to Talos's module list
         if: steps.have.outputs.skip != 'true' && inputs.flavor == 'media'
         run: |
