@@ -40,8 +40,9 @@ INSTALLER_REPO="${INSTALLER_REPO:-}"
 FACTORY_REPO="${FACTORY_REPO:-}"
 NETBOOT="${NETBOOT:-0}"
 # MODULE_SIG_ENFORCE=0: our own kernel does not trust the key Sidero signs extensions with, so Talos's
-# module.sig_enforce=1 has to go. The disk image takes it as kernel arguments; the installer rebuilds the
-# cmdline from the overlay's arguments on every upgrade, so there it is an overlay option.
+# module.sig_enforce=1 has to go: the kernel cannot turn it off again once any argument turned it on. Installs and
+# upgrades use the cmdline built into the installer (its UKI), so disk image and installer get the same
+# arguments; the overlay option covers the older path, where the installer builds the cmdline itself.
 MODULE_SIG_ENFORCE="${MODULE_SIG_ENFORCE:-1}"
 KARGS=()
 OVERLAY_OPTS=()
@@ -147,7 +148,7 @@ push_factory() {
   crane() { docker run --rm ${DOCKER_ARGS[@]+"${DOCKER_ARGS[@]}"} -v "${WORK}:/out" "${CRANE}" "$@"; }
   crane append --new_layer /out/marker.tar --new_tag "${MARK}" || return 1
   crane mutate "${MARK}" --set-platform linux/arm64 --tag "${MARK}" || return 1
-  imager "${WORK}" installer --arch arm64 ${OVERLAY_OPTS[@]+"${OVERLAY_OPTS[@]}"} \
+  imager "${WORK}" installer --arch arm64 ${KARGS[@]+"${KARGS[@]}"} ${OVERLAY_OPTS[@]+"${OVERLAY_OPTS[@]}"} \
     --overlay-image "${OVERLAY_IMAGE}" --overlay-name "${BOARD}" \
     ${EXT_ARGS[@]+"${EXT_ARGS[@]}"} --system-extension-image "${MARK}" || return 1
   crane push /out/installer-arm64.tar "${REF}" || return 1
@@ -226,7 +227,7 @@ echo ">> done: ${IMG}"
 if [ -n "${INSTALLER_REPO}" ]; then
   REF="${INSTALLER_REPO}-${BOARD}${SUFFIX}:${TALOS_VERSION}"
   echo ">> installer ${REF}"
-  imager "${WORK}" installer --arch arm64 ${OVERLAY_OPTS[@]+"${OVERLAY_OPTS[@]}"} \
+  imager "${WORK}" installer --arch arm64 ${KARGS[@]+"${KARGS[@]}"} ${OVERLAY_OPTS[@]+"${OVERLAY_OPTS[@]}"} \
     --overlay-image "${OVERLAY_IMAGE}" --overlay-name "${BOARD}" \
     ${EXT_ARGS[@]+"${EXT_ARGS[@]}"} || return 1
   docker run --rm ${DOCKER_ARGS[@]+"${DOCKER_ARGS[@]}"} -v "${WORK}:/out" "${CRANE}" \
