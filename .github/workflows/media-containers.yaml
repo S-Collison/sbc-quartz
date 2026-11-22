@@ -3,7 +3,7 @@
 # Scrypted base, so they rebuild when containers/ changes or a base image
 # moves (decided by track.yaml).
 #
-#   media-kernel.yaml    kernel side: Hantro/RGA modules -> /dev/video*, /dev/media* on media nodes
+#   kernel.yaml    kernel side: Hantro/RGA modules -> /dev/video*, /dev/media* on media nodes
 #   media-containers.yaml (this) userspace side: FFmpeg 8.1 + V4L2 Request hwaccel that uses them
 #     ghcr.io/<owner>/scrypted-rk3566      Scrypted + /opt/ffmpeg-v4l2request/bin/ffmpeg
 #     ghcr.io/<owner>/ffmpeg-v4l2request   same FFmpeg on Debian, for other apps / testing

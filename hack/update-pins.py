@@ -55,11 +55,6 @@ def main():
     # Makefile / .kres.yaml PKGS defaults
     rw("Makefile", lambda t: sub1(r"^PKGS \?= .*$", f"PKGS ?= {a.pkgs}", t, "Makefile"))
     rw(".kres.yaml", lambda t: sub1(r"(- name: PKGS\n\s+defaultValue: ).*$", rf"\g<1>{a.pkgs}", t, ".kres.yaml"))
-    # example install patches + tuppr manifest
-    for board in ("quartz64-a", "soquartz-blade", "soquartz-model-a"):
-        p = f"talos/patches/install-{board}.yaml"
-        rw(p, lambda t: sub1(r"(talos-installer-[a-z0-9-]+):v[0-9.]+(-\S+)?", rf"\g<1>:{a.talos}", t, p))
-    rw("talos/tuppr/upgrades.yaml", lambda t: sub1(r"(talos:\n\s+version: )v\S+", rf"\g<1>{a.talos}", t, "upgrades.yaml"))
 
     if a.rockchip_pkgfile:
         up = open(a.rockchip_pkgfile).read()

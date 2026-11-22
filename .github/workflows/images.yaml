@@ -1,7 +1,7 @@
 # Builds the overlay, then Talos SD/eMMC images + upgrade installers for each
 # board, in two flavors:
-#   stock  - Talos kernel as released (+ official drbd)
-#   media  - same mainline kernel + Hantro/RGA (media-kernel.yaml), drbd rebuilt for it
+#   stock  - the Talos kernel, plus the Ethernet driver if that release lacks it
+#   media  - same kernel + Hantro/RGA (kernel.yaml)
 # and publishes a GitHub Release named after the git tag. A media failure never
 # blocks the stock images.
 #
@@ -18,6 +18,7 @@
 # tag with the new build, so betas and older versions can be regenerated at will
 # without touching the vX.Y.Z tags. Untick "publish" for a 7-day artifact-only run.
 name: images
+run-name: images ${{ github.ref_type == 'tag' && github.ref_name || inputs.talos_version || 'latest' }}
 on:
   push:
     tags: ["v*"]
@@ -131,7 +132,7 @@ jobs:
   base-kernel:
     needs: resolve
     if: needs.resolve.outputs.custom_base == 'true'
-    uses: ./.github/workflows/media-kernel.yaml
+    uses: ./.github/workflows/kernel.yaml
     with:
       talos: ${{ needs.resolve.outputs.talos }}
       pkgs: ${{ needs.resolve.outputs.pkgs }}
@@ -141,7 +142,7 @@ jobs:
   media-kernel:
     needs: resolve
     if: needs.resolve.outputs.media == 'true'
-    uses: ./.github/workflows/media-kernel.yaml
+    uses: ./.github/workflows/kernel.yaml
     with:
       talos: ${{ needs.resolve.outputs.talos }}
       pkgs: ${{ needs.resolve.outputs.pkgs }}
@@ -212,9 +213,8 @@ jobs:
         env:
           TALOS_VERSION: ${{ needs.resolve.outputs.talos }}
           FLAVOR: stock
-          # Official extensions. With custom_base, our base kernel's imager/installer-base and
-          # module signature enforcement off, so Sidero-signed extension modules load on it.
-          EXTENSIONS: drbd
+          # With custom_base: our base kernel's imager/installer-base, and module signature enforcement
+          # off so that extensions signed by Sidero load on it.
           IMAGER_IMAGE: ${{ needs.resolve.outputs.custom_base == 'true' && format('{0}/{1}/talos-base/imager:{2}', env.REGISTRY, needs.resolve.outputs.owner, needs.resolve.outputs.talos) || '' }}
           BASE_INSTALLER_IMAGE: ${{ needs.resolve.outputs.custom_base == 'true' && format('{0}/{1}/talos-base/installer-base:{2}', env.REGISTRY, needs.resolve.outputs.owner, needs.resolve.outputs.talos) || '' }}
           MODULE_SIG_ENFORCE: ${{ needs.resolve.outputs.custom_base == 'true' && '0' || '1' }}
@@ -263,8 +263,7 @@ jobs:
           INSTALLER_REPO: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-installer
           IMAGER_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-media/imager:${{ needs.resolve.outputs.talos }}
           BASE_INSTALLER_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-media/installer-base:${{ needs.resolve.outputs.talos }}
-          # our kernel: official extensions with module signature enforcement off
-          EXTENSIONS: drbd
+          # our kernel: enforcement off, so that extensions signed by Sidero load on it
           MODULE_SIG_ENFORCE: "0"
         run: |
           if [ "${{ needs.resolve.outputs.netboot }}" = true ] && [ "${{ matrix.board }}" = quartz64-a ]; then export NETBOOT=1; fi
@@ -310,7 +309,7 @@ jobs:
           | SOQuartz + Blade | \`talos-${t}-soquartz-blade.raw.xz\` | \`talos-${t}-soquartz-blade-media.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-soquartz-blade[-media]:${t}\` |
           | SOQuartz + Model-A | \`talos-${t}-soquartz-model-a.raw.xz\` | \`talos-${t}-soquartz-model-a-media.raw.xz\` | \`${REGISTRY}/${o}/talos-installer-soquartz-model-a[-media]:${t}\` |
 
-          Flash: \`xz -dc <image> | sudo dd of=/dev/rdiskN bs=4m\`. Serial: UART2, 1500000 8N1. Bring-up: docs/bring-up.md.
+          Flash: \`xz -dc <image> | sudo dd of=/dev/rdiskN bs=4m\`. Serial: UART2, 1500000 8N1. Installing and upgrading: README.md.
           NOTES
           ls -la dist
       - name: Replace an earlier manual build of this version

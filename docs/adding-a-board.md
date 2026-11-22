@@ -1,4 +1,4 @@
-# Adding a baseboard
+# Adding a board
 
 ## How an image is put together
 
@@ -94,7 +94,7 @@ Try upstreaming the DTS too; once it's in mainline, the board becomes Case A.
 
 ## Verifying a new board
 
-1. `hack/build-image.sh <name>` must print four `ok` lines.
+1. `hack/build-image.sh <name>` must finish without a `BAD` line.
 2. Serial at 1500000 8N1: you should see U-Boot, then `EFI stub`, then Talos
    logs. If it stops right after U-Boot, the DTB or `fdtfile` is wrong.
 3. The node gets a DHCP address; `talosctl -n <ip> --insecure get links` answers.

@@ -1,7 +1,7 @@
 # The only scheduled workflow. Everything published comes from here.
 #
 # 1. pins (daily / by hand)
-#    latest Talos release + its PKGS           -> Makefile/.kres.yaml defaults (local builds), example patches
+#    latest Talos release + its PKGS           -> Makefile/.kres.yaml defaults (local builds)
 #    latest siderolabs/sbc-rockchip release:
 #      U-Boot, TF-A, rkbin (+ checksums), bldr, TOOLS, installer go.mod/go.sum
 #                                              -> Pkgfile, Makefile, .kres.yaml, installers/quartz64/src
@@ -17,7 +17,11 @@
 #    A tag is only created after the pins for that release built (step 1), then
 #    images.yaml is dispatched on it (it publishes the release; failures open an issue).
 #
-# 3. containers
+# 3. prerelease
+#    The newest upstream beta or release candidate is built as the pre-release build-<version>, again when
+#    build inputs change, so the next Talos version can be tried before it is released.
+#
+# 4. containers
 #    Rebuilds the media containers when their Dockerfile changed since the last build or
 #    the Scrypted/Debian base image has a new digest (media-containers.yaml, issue on failure).
 #
@@ -46,9 +50,10 @@ on:
       - hack/build-image.sh
       - hack/zboot-extract.py
       - hack/media-modules.py
+      - hack/kernel-fragment.sh
       - containers/**
       - .github/workflows/images.yaml
-      - .github/workflows/media-kernel.yaml
+      - .github/workflows/kernel.yaml
       - .github/workflows/media-containers.yaml
 
 permissions:
@@ -66,8 +71,8 @@ env:
   # what counts as a build input for tagging (keep in sync with the push paths above, minus containers)
   BUILD_PATHS: >-
     Pkgfile Makefile go.work .dockerignore artifacts installers internal profiles kernel
-    hack/build-image.sh hack/zboot-extract.py hack/media-modules.py
-    .github/workflows/images.yaml .github/workflows/media-kernel.yaml
+    hack/build-image.sh hack/zboot-extract.py hack/media-modules.py hack/kernel-fragment.sh
+    .github/workflows/images.yaml .github/workflows/kernel.yaml
 
 jobs:
   pins:
@@ -206,6 +211,41 @@ jobs:
           # tags pushed with GITHUB_TOKEN don't trigger workflows; dispatch explicitly
           gh workflow run images.yaml --ref "${v}"
           echo "::notice::${what} ${v} at $(git rev-parse --short HEAD), images.yaml dispatched"
+
+  # The next Talos version, before it is released: newest beta or release candidate, as a pre-release here.
+  prerelease:
+    needs: pins
+    if: always() && (needs.pins.result == 'success' || needs.pins.result == 'skipped')
+    runs-on: ubuntu-24.04-arm
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with: { ref: main, fetch-depth: 0, fetch-tags: true }
+      - name: Build the newest upstream beta or release candidate
+        run: |
+          set -euo pipefail
+          releases="$(gh api 'repos/siderolabs/talos/releases?per_page=100' --jq '.[].tag_name')"
+          stable="$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"${releases}" | sort -V | tail -n1)"
+          next="$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-(beta|rc)\.[0-9]+$' <<<"${releases}" | sort -V | tail -n1 || true)"
+          [ -n "${next}" ] || { echo "no upstream beta or release candidate"; exit 0; }
+          # released already, or older than what is released
+          if [ "$(printf '%s\n' "${next%%-*}" "${stable}" | sort -V | tail -n1)" = "${stable}" ]; then
+            echo "${next} is not ahead of ${stable}"; exit 0
+          fi
+          # built already from these build inputs
+          # shellcheck disable=SC2086
+          if git rev-parse -q --verify "refs/tags/build-${next}" >/dev/null && git diff --quiet "build-${next}" HEAD -- ${BUILD_PATHS}; then
+            echo "build-${next} is current"; exit 0
+          fi
+          # tried already at this commit: a failure has its own issue, do not repeat it every day
+          head="$(git rev-parse HEAD)"
+          if gh run list --workflow images.yaml --limit 50 --json displayTitle,headSha \
+               --jq '.[] | "\(.headSha) \(.displayTitle)"' | grep -qxF "${head} images ${next}"; then
+            echo "${next} was already built at ${head::7}"; exit 0
+          fi
+          gh workflow run images.yaml --ref main -f talos_version="${next}"
+          echo "::notice::building pre-release ${next}"
 
   containers:
     needs: pins

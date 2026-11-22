@@ -15,7 +15,7 @@
 #      -> talos-<flavor>/installer-base, talos-<flavor>/imager
 # Images go to ghcr.io/<owner>/talos-<flavor>/*. Each step is skipped if its image
 # (keyed on the fragment) already exists.
-name: media-kernel
+name: kernel
 on:
   workflow_call:
     inputs:
@@ -96,13 +96,13 @@ jobs:
       - uses: imjasonh/setup-crane@v0.7
       - id: have
         run: |
-          # Marker tag keyed on the config fragment (+ module resolver for media) and the Talos patch
-          # below (TALOS_PATCH), so changing any of them rebuilds the imager/installer-base.
-          TALOS_PATCH=no-sig-enforce-default-v1+dashboard-off-v1
+          # Marker tag keyed on the config fragment (+ module resolver for media) and on how Talos is built,
+          # so changing any of them rebuilds the imager/installer-base.
+          BUILD_REV=talos-unpatched-v1
           if [ "${{ inputs.flavor }}" = media ]; then
-            mkey="$({ bash hack/kernel-fragment.sh media; cat hack/media-modules.py; echo "${TALOS_PATCH}"; } | sha256sum | cut -c1-12)"
+            mkey="$({ bash hack/kernel-fragment.sh media; cat hack/media-modules.py; echo "${BUILD_REV}"; } | sha256sum | cut -c1-12)"
           else
-            mkey="$({ bash hack/kernel-fragment.sh base; echo "${TALOS_PATCH}"; } | sha256sum | cut -c1-12)"
+            mkey="$({ bash hack/kernel-fragment.sh base; echo "${BUILD_REV}"; } | sha256sum | cut -c1-12)"
           fi
           echo "marker=${{ inputs.talos }}-${mkey}" >> "$GITHUB_OUTPUT"
           if crane digest ghcr.io/${{ needs.kernel.outputs.ns }}/imager:${{ inputs.talos }}-${mkey} >/dev/null 2>&1; then
@@ -111,37 +111,6 @@ jobs:
       - name: Checkout siderolabs/talos at the release
         if: steps.have.outputs.skip != 'true'
         run: git clone --depth 1 --branch ${{ inputs.talos }} https://github.com/siderolabs/talos _talos
-      - name: Drop Talos's default module.sig_enforce=1 (installer + imager)
-        if: steps.have.outputs.skip != 'true'
-        # Official Sidero extensions (drbd) are signed with Sidero's key, which our kernel does not
-        # trust. Images boot with module.sig_enforce=0, but the installer rebuilds the cmdline on every
-        # install/upgrade from kernel.DefaultArgs (which adds =1 first; the kernel cannot turn it back
-        # off). Removing that default from the installer and imager we build keeps enforcement off
-        # across upgrades. Only our custom kernels use this; Sidero-kernel releases are untouched.
-        # Fails if the line is not found exactly once, so a Talos change is noticed, not ignored.
-        run: |
-          set -euo pipefail
-          f=_talos/pkg/machinery/kernel/kernel.go
-          n="$(grep -c 'constants.KernelParamEnforceModuleSigVerify+"=1"' "${f}" || true)"
-          [ "${n}" = 1 ] || { echo "::error::expected 1 sig_enforce default in ${f}, found ${n}"; exit 1; }
-          sed -i '/constants.KernelParamEnforceModuleSigVerify+"=1"/d' "${f}"
-          if grep -q 'KernelParamEnforceModuleSigVerify+"=1"' "${f}"; then echo "::error::sig_enforce default still present"; exit 1; fi
-          grep -n -A2 'SupportsDisablingModuleSignatureVerification' "${f}"
-      - name: Turn the Talos dashboard off by default (installer + imager)
-        if: steps.have.outputs.skip != 'true'
-        # The boards are headless and the dashboard costs 5-6 % of a core each. Talos will not stop it
-        # at runtime and UnattendedInstallConfig has no kernel arguments, so it has to be a default here:
-        # the installer rebuilds the cmdline from kernel.DefaultArgs on every install/upgrade.
-        # Fails if the line is not found exactly once, so a Talos change is noticed, not ignored.
-        run: |
-          set -euo pipefail
-          f=_talos/pkg/machinery/kernel/kernel.go
-          n="$(grep -c '^[[:space:]]*"consoleblank=0",$' "${f}" || true)"
-          [ "${n}" = 1 ] || { echo "::error::expected 1 consoleblank default in ${f}, found ${n}"; exit 1; }
-          sed -i 's/^\([[:space:]]*\)"consoleblank=0",$/&\n\1constants.KernelParamDashboardDisabled+"=1",/' "${f}"
-          n="$(grep -c 'constants.KernelParamDashboardDisabled+"=1",' "${f}" || true)"
-          [ "${n}" = 1 ] || { echo "::error::dashboard default not added"; exit 1; }
-          grep -n 'KernelParamDashboardDisabled' _talos/pkg/machinery/constants/constants.go
       - name: Add media modules to Talos's module list
         if: steps.have.outputs.skip != 'true' && inputs.flavor == 'media'
         run: |

@@ -50,18 +50,29 @@ func main() {
 
 type quartz64 struct{}
 
-type quartz64ExtraOptions struct{}
+type quartz64ExtraOptions struct {
+	// ModuleSigEnforce sets module.sig_enforce, replacing the Talos default on install and upgrade.
+	// Used with a kernel built here, which does not trust the key Sidero Labs signs extensions with.
+	ModuleSigEnforce string `yaml:"moduleSigEnforce,omitempty"`
+}
 
-func (i *quartz64) GetOptions(_ context.Context, _ quartz64ExtraOptions) (overlay.Options, error) {
+func (i *quartz64) GetOptions(_ context.Context, extra quartz64ExtraOptions) (overlay.Options, error) {
+	kernelArgs := []string{
+		// HDMI (if the kernel drives it) + the UART2 debug header at 1.5 Mbaud.
+		// The last console= is /dev/console, so Talos logs go to serial.
+		"console=tty0",
+		"console=ttyS2,1500000n8",
+		"sysctl.kernel.kexec_load_disabled=1",
+		"talos.dashboard.disabled=1",
+	}
+
+	if extra.ModuleSigEnforce != "" {
+		kernelArgs = append(kernelArgs, "module.sig_enforce="+extra.ModuleSigEnforce)
+	}
+
 	return overlay.Options{
-		Name: board,
-		KernelArgs: []string{
-			// HDMI (if the kernel drives it) + the UART2 debug header at 1.5 Mbaud.
-			// The last console= is /dev/console, so Talos logs go to serial.
-			"console=tty0",
-			"console=ttyS2,1500000n8",
-			"sysctl.kernel.kexec_load_disabled=1",
-		},
+		Name:       board,
+		KernelArgs: kernelArgs,
 		PartitionOptions: overlay.PartitionOptions{
 			// Leave the first 10 MiB for idbloader + u-boot.itb.
 			Offset: 2048 * 10,

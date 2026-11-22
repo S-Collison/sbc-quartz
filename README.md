@@ -1,119 +1,126 @@
 # sbc-quartz
 
-Talos Linux overlay for the Pine64 RK3566 family.
+Talos Linux for Pine64 Quartz64 and SOQuartz boards (Rockchip RK3566).
 
-| overlay name       | board                                   | DTB                          |
-|--------------------|-----------------------------------------|------------------------------|
-| `quartz64-a`       | Quartz64 Model A                        | `rk3566-quartz64-a.dtb`      |
-| `quartz64-b`       | Quartz64 Model B                        | `rk3566-quartz64-b.dtb`      |
-| `soquartz-blade`   | SOQuartz on the Pine64 Blade baseboard  | `rk3566-soquartz-blade.dtb`  |
-| `soquartz-model-a` | SOQuartz on the Pine64 Model-A baseboard| `rk3566-soquartz-model-a.dtb`|
-| `soquartz-cm4`     | SOQuartz on a CM4-IO style carrier      | `rk3566-soquartz-cm4.dtb`    |
+This repository builds the Talos overlay for these boards and publishes disk images and upgrade installers for
+each Talos release. It is a community project, not affiliated with Sidero Labs, and its overlay is not available
+from the Image Factory.
 
-SOQuartz is one module with many possible baseboards. Each overlay name pairs a
-U-Boot defconfig with a kernel DTB. The pairs are listed once, in `Pkgfile`
-(`vars.boards`). Third-party CM4 carriers can reuse the `soquartz-cm4` pair
-under their own name; see [docs/adding-a-baseboard.md](docs/adding-a-baseboard.md).
+## Supported boards
 
-One overlay image (`ghcr.io/s-collison/sbc-quartz`) covers every board. The
-separate `sbc-soquartz` folder isn't needed.
+| Overlay name       | Board                                   | Published images |
+| ------------------ | --------------------------------------- | ---------------- |
+| `quartz64-a`       | Quartz64 Model A                        | yes              |
+| `quartz64-b`       | Quartz64 Model B                        | build it yourself |
+| `soquartz-blade`   | SOQuartz on the Pine64 Blade            | yes              |
+| `soquartz-model-a` | SOQuartz on the Pine64 Model-A          | yes              |
+| `soquartz-cm4`     | SOQuartz on a CM4-IO style carrier      | build it yourself |
 
-## Build
+For another carrier, see [Adding a board](docs/adding-a-board.md).
 
-```sh
-docker buildx create --name local --use            # once
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u s-collison --password-stdin
+Each release has two images per board:
 
-# 1. overlay image (linux/amd64 + linux/arm64) -> ghcr.io/s-collison/sbc-quartz:<git tag>
-make sbc-quartz PUSH=true
-#    The ghcr package must be public (or the imager can't pull it).
+* `talos-<version>-<board>.raw.xz`, the standard image.
+* `talos-<version>-<board>-media.raw.xz`, which adds [hardware video decoding](docs/hardware-video.md).
 
-# 2. bootable image for one board (always --arch arm64, verified before it's returned)
-hack/build-image.sh                       # quartz64-a, soquartz-blade, soquartz-model-a (uses each board's GRUB profile)
-hack/build-image.sh soquartz-cm4          # or name any boards
-TALOS_VERSION=v1.14.5 hack/build-image.sh quartz64-a
+## Installing
+
+You need [`talosctl`](https://docs.siderolabs.com/talos/v1.14/getting-started/talosctl) and an SD card or an eMMC
+module with a USB adapter.
+
+### Download the image
+
+```bash
+VERSION=v1.14.6
+IMAGE=talos-${VERSION}-soquartz-blade.raw.xz
+curl -LO https://github.com/S-Collison/sbc-quartz/releases/download/${VERSION}/${IMAGE}
+curl -LO https://github.com/S-Collison/sbc-quartz/releases/download/${VERSION}/${IMAGE}.sha256
+sha256sum -c ${IMAGE}.sha256
 ```
 
-Output: `_out/talos-<version>-<board>.raw.xz`.
+### Write the image
 
-## Getting a cluster up
+Write it to the disk the board boots from. Everything on that disk is lost.
 
-**Start here: [docs/bring-up.md](docs/bring-up.md)** (images → network → management node → Pi 5 → workers → upgrades).
-
-Flash a release image, boot into maintenance mode, assign configs with
-holzkube-manager (or talosctl), and upgrade with tuppr:
-[docs/provision-and-upgrade.md](docs/provision-and-upgrade.md). The management
-node (Pi Zero 2 W or Quartz64 A: holzkube, registry caches, install-image guard,
-etcd backups, `sbc-flash`) is in [docs/management-node.md](docs/management-node.md).
-
-## Flavors and netboot (optional)
-
-- `stock`: Talos kernel as released. `media`: the same kernel plus Hantro/RGA for
-  hardware video decode ([docs/hardware-video.md](docs/hardware-video.md)).
-- Optional, later: U-Boot tries local disks first, then PXE. The management node running dnsmasq serves the
-  `netboot-<talos>-<flavor>.tar.gz` tree, and nodes are provisioned from maintenance
-  mode with holzkube-manager or talosctl ([docs/netboot.md](docs/netboot.md)).
-
-## CI releases
-
-Hands-off: one daily workflow, `track.yaml`, and you only act on failures.
-
-- It follows upstream: the latest Talos release and its kernel `PKGS`, the latest
-  siderolabs/sbc-rockchip U-Boot/TF-A/rkbin/toolchain/Go deps, and the Kwiboo FFmpeg
-  branch. Pins are written to the build files, the overlay is test-built, and the change
-  is committed to `main`. There is no version file: **the tag is the version**.
-- Releases are tagged after upstream Talos: **`v1.14.5`** is the first build for Talos
-  v1.14.5. Fixes from this repo don't get new tags: the tag is moved to the fixed `main` and
-  the release rebuilt. A tag is created or moved
-  only when build inputs changed since the last one, and `images.yaml` then publishes the
-  release: stock and media images and upgrade installers for quartz64-a, soquartz-blade
-  and soquartz-model-a.
-- The media containers are rebuilt when their Dockerfile or base image changes.
-- **Failures:** if the pin update doesn't build, you get a PR labelled `auto-update`. If a
-  release or container build fails, you get an issue labelled `build-failure`. Fix it, merge
-  to `main`, and the next tag and build happen by themselves.
-
-Details are in [docs/cluster-ops.md](docs/cluster-ops.md).
-
-## Flash and first boot
-
-```sh
-diskutil list                               # find the SD card, e.g. /dev/disk4
-diskutil unmountDisk /dev/disk4
-xz -dc _out/talos-v1.14.5-quartz64-a.raw.xz | sudo dd of=/dev/rdisk4 bs=4m
+```bash
+xz -dc ${IMAGE} | sudo dd of=/dev/sdX bs=4M conv=fsync
 ```
 
-* The RK3566 boot ROM tries SPI -> eMMC -> SD. **Remove the eMMC module (or wipe
-  its first 16 MiB) when booting from SD**, or an old bootloader on eMMC wins.
-* Watch the UART2 debug header at **1500000 8N1** (3.3 V). U-Boot does not drive
-  HDMI on RK3566, so a black HDMI screen during boot is expected; the node will
-  show up on DHCP and answer `talosctl -n <ip> get links --insecure` in
-  maintenance mode.
+On macOS, use `shasum -a 256 -c`, `/dev/rdiskN` and `bs=4m`.
 
-## Install to disk / upgrade
+The boot ROM tries SPI, eMMC and then SD. If you boot from SD, remove the eMMC module or make sure it has no
+bootloader on it. The board cannot boot from NVMe.
 
-Flash the image straight onto the disk the board boots from (eMMC or SD); see
-[docs/cluster-ops.md](docs/cluster-ops.md#first-install-simplest-bare-metal-path)
-for why. For upgrades, use the board's installer image:
+### Boot the board
 
-```sh
-INSTALLER_REPO=ghcr.io/s-collison/talos-installer hack/build-image.sh quartz64-a
-# -> ghcr.io/s-collison/talos-installer-quartz64-a:<talos-version>
-talosctl -n <ip> upgrade --image ghcr.io/s-collison/talos-installer-quartz64-a:v1.14.5
+The board gets an address from DHCP and waits in maintenance mode:
+
+```bash
+talosctl get disks --insecure --nodes <ip>
 ```
 
-CI publishes these installers on every release.
+The screen stays black while it boots. The serial console is UART2 at 1500000 8N1, 3.3 V.
 
-## Versions
+### Configure the node
 
-| component | version |
-|---|---|
-| Talos (imager, machinery Go library) | v1.14.5 |
-| DTBs | Talos 1.14.5 kernel (`PKGS` = siderolabs/pkgs v1.14.0-48-gf4bda77, Linux 6.18.58) |
-| U-Boot | 2026.10 |
-| TF-A (BL31) | lts-v2.14.11 |
-| rkbin (DDR blob) | 74213af, rk3566_ddr_1056MHz |
-| toolchain | siderolabs/tools v1.15.0-alpha.0-16-g54f72f9, bldr v0.6.5 |
+Use the installer built for your board. The standard Talos installers lack the Ethernet driver, and a node
+upgraded with one loses its network. Save this as `install.yaml`:
 
-These pins match siderolabs/sbc-rockchip v0.3.0, which builds RK3566/RK3568
-boards with them. `track.yaml` moves them (and `PKGS`) forward automatically.
+```yaml
+apiVersion: v1alpha1
+kind: UnattendedInstallConfig
+installer:
+  image: ghcr.io/s-collison/talos-installer-soquartz-blade:v1.14.6
+provisioning:
+  diskSelector:
+    match: disk.transport == "mmc" && disk.size > 10u * GB
+```
+
+For the media image, the installer is `talos-installer-soquartz-blade-media`. Generate and apply the machine
+configuration as usual:
+
+```bash
+talosctl gen config <cluster-name> https://<endpoint>:6443 --config-patch @install.yaml
+talosctl apply-config --insecure --nodes <ip> --file controlplane.yaml
+```
+
+Continue with [Getting Started](https://docs.siderolabs.com/talos/v1.14/getting-started/getting-started) in the
+Talos documentation.
+
+## Upgrading
+
+```bash
+talosctl upgrade --nodes <ip> --image ghcr.io/s-collison/talos-installer-soquartz-blade:<version>
+```
+
+This also updates U-Boot and the device tree. Do not use an Image Factory installer, or a tool that selects one.
+
+## Differences from upstream Talos
+
+* The kernel includes the Motorcomm YT8511 Ethernet driver.
+* Kernel module signatures are not enforced (`module.sig_enforce=0`), so that extensions signed by Sidero Labs load.
+* The console dashboard is disabled (`talos.dashboard.disabled=1`).
+
+Wi-Fi and Bluetooth are not available, as in upstream Talos.
+
+## Known issues
+
+* **Quartz64 Model A, gigabit Ethernet.** On some boards the default transmit timing corrupts frames, which shows
+  up as CRC errors on the switch port. Set the port to 100 Mbps and please report it.
+
+## Building
+
+```bash
+make sbc-quartz PUSH=true              # overlay image
+hack/build-image.sh soquartz-blade     # disk image, in _out/
+```
+
+Component versions are in [`Pkgfile`](Pkgfile) and the [`Makefile`](Makefile). Both commands need Docker with
+buildx, and the first a login to the registry.
+
+Releases are tagged with the Talos version. A fix to this repository rebuilds the current release under the same
+tag. To build a pre-release or an older version, run the `images` workflow by hand.
+
+## License
+
+[Mozilla Public License 2.0](LICENSE)

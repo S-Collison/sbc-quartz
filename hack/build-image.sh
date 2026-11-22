@@ -7,14 +7,13 @@
 # Env:
 #   TALOS_VERSION         Talos version (default: from the newest vX.Y.Z git tag)
 #   FLAVOR                stock | media (default stock). "media" = custom kernel with Hantro/RGA;
-#                         needs the images from .github/workflows/media-kernel.yaml
+#                         needs the images from .github/workflows/kernel.yaml
 #   OVERLAY_IMAGE         overlay from this repo (default ghcr.io/s-collison/sbc-quartz:$(git describe))
 #   IMAGER_IMAGE          default: ghcr.io/siderolabs/imager:$TALOS_VERSION (stock),
 #                         ghcr.io/s-collison/talos-media/imager:$TALOS_VERSION (media)
 #   BASE_INSTALLER_IMAGE  default: unset (stock), ghcr.io/s-collison/talos-media/installer-base:$TALOS_VERSION (media)
-#   EXTENSIONS            official extension names, pinned for TALOS_VERSION, e.g. "drbd" (stock only:
-#                         official modules are signed with Sidero's key, not the media kernel's)
-#   EXTENSION_IMAGES      explicit extension image refs (media: ghcr.io/s-collison/talos-media/drbd:$TALOS_VERSION)
+#   EXTENSIONS            official extensions to include, e.g. "drbd iscsi-tools" (default: none)
+#   EXTENSION_IMAGES      other extension images to include
 #   INSTALLER_REPO        also push ${INSTALLER_REPO}-<board>[-media]:${TALOS_VERSION}
 #   NETBOOT=1             also build the TFTP tree _out/netboot-<flavor>/ (+ .tar.gz) for U-Boot PXE
 #   DOCKER_CONFIG         registry credentials dir passed to imager/crane (default ~/.docker)
@@ -37,14 +36,15 @@ EXTENSIONS="${EXTENSIONS:-}"
 EXTENSION_IMAGES="${EXTENSION_IMAGES:-}"
 INSTALLER_REPO="${INSTALLER_REPO:-}"
 NETBOOT="${NETBOOT:-0}"
-# MODULE_SIG_ENFORCE=0: drop Talos's module.sig_enforce=1 so official Sidero extensions
-# (signed with Sidero's key) load on our own kernel. Only the disk image and netboot
-# cmdline carry kernel args; the installer rebuilds the cmdline on every upgrade, so
-# nodes need machine.install.extraKernelArgs: ["-module.sig_enforce"].
+# MODULE_SIG_ENFORCE=0: our own kernel does not trust the key Sidero signs extensions with, so Talos's
+# module.sig_enforce=1 has to go. The disk image takes it as kernel arguments; the installer rebuilds the
+# cmdline from the overlay's arguments on every upgrade, so there it is an overlay option.
 MODULE_SIG_ENFORCE="${MODULE_SIG_ENFORCE:-1}"
 KARGS=()
+OVERLAY_OPTS=()
 if [ "${MODULE_SIG_ENFORCE}" = 0 ]; then
   KARGS=(--extra-kernel-arg=-module.sig_enforce --extra-kernel-arg=module.sig_enforce=0)
+  OVERLAY_OPTS=(--overlay-option=moduleSigEnforce=0)
 fi
 OUT="${PWD}/_out"
 CRANE="gcr.io/go-containerregistry/crane:latest"
@@ -169,7 +169,7 @@ echo ">> done: ${IMG}"
 if [ -n "${INSTALLER_REPO}" ]; then
   REF="${INSTALLER_REPO}-${BOARD}${SUFFIX}:${TALOS_VERSION}"
   echo ">> installer ${REF}"
-  imager "${WORK}" installer --arch arm64 \
+  imager "${WORK}" installer --arch arm64 ${OVERLAY_OPTS[@]+"${OVERLAY_OPTS[@]}"} \
     --overlay-image "${OVERLAY_IMAGE}" --overlay-name "${BOARD}" \
     ${EXT_ARGS[@]+"${EXT_ARGS[@]}"} || return 1
   docker run --rm ${DOCKER_ARGS[@]+"${DOCKER_ARGS[@]}"} -v "${WORK}:/out" "${CRANE}" \
