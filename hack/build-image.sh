@@ -15,6 +15,8 @@
 #   EXTENSIONS            official extensions to include, e.g. "drbd iscsi-tools" (default: none)
 #   EXTENSION_IMAGES      other extension images to include
 #   INSTALLER_REPO        also push ${INSTALLER_REPO}-<board>[-media]:${TALOS_VERSION}
+#   FACTORY_REPO          also push ${FACTORY_REPO}/metal-installer/<schematic>:${TALOS_VERSION}, the same installer plus
+#                         a marker with its schematic ID, named the way an Image Factory names it (topf, tuppr)
 #   NETBOOT=1             also build the TFTP tree _out/netboot-<flavor>/ (+ .tar.gz) for U-Boot PXE
 #   DOCKER_CONFIG         registry credentials dir passed to imager/crane (default ~/.docker)
 #
@@ -35,6 +37,7 @@ OVERLAY_IMAGE="${OVERLAY_IMAGE:-ghcr.io/s-collison/sbc-quartz:${TAG}}"
 EXTENSIONS="${EXTENSIONS:-}"
 EXTENSION_IMAGES="${EXTENSION_IMAGES:-}"
 INSTALLER_REPO="${INSTALLER_REPO:-}"
+FACTORY_REPO="${FACTORY_REPO:-}"
 NETBOOT="${NETBOOT:-0}"
 # MODULE_SIG_ENFORCE=0: our own kernel does not trust the key Sidero signs extensions with, so Talos's
 # module.sig_enforce=1 has to go. The disk image takes it as kernel arguments; the installer rebuilds the
@@ -86,6 +89,42 @@ for ref in ${EXTENSION_IMAGES}; do EXT_ARGS+=(--system-extension-image "${ref}")
 [ -z "${BASE_INSTALLER_IMAGE}" ] || EXT_ARGS+=(--base-installer-image "${BASE_INSTALLER_IMAGE}")
 for a in ${EXT_ARGS[@]+"${EXT_ARGS[@]}"}; do case "$a" in --*) ;; *) echo ">> input ${a}";; esac; done
 
+# The schematic in Image Factory form; its sha256 is the schematic ID. The overlay tag is left out, so the ID
+# stays the same across Talos versions and overlay builds and changes only with board, flavor or extensions.
+schematic_yaml() { # BOARD
+  printf 'overlay:\n    image: s-collison/sbc-quartz\n    name: %s\n    options:\n        flavor: %s\n' "$1" "${FLAVOR}"
+  if [ -z "${EXTENSIONS}${EXTENSION_IMAGES}" ]; then printf 'customization: {}\n'; return; fi
+  printf 'customization:\n    systemExtensions:\n        officialExtensions:\n'
+  local e
+  for e in ${EXTENSIONS}; do printf '            - siderolabs/%s\n' "${e}"; done | sort
+  for e in ${EXTENSION_IMAGES}; do printf '            - %s\n' "${e%[:@]*}"; done | sort
+}
+
+# The marker extension an Image Factory adds: Talos reports its version as the node's schematic ID.
+schematic_layer() { # BOARD ID OUT.tar
+  schematic_yaml "$1" | python3 -I -c '
+import io, json, sys, tarfile
+sid, out = sys.argv[1:]
+info = sys.stdin.read()
+m = json.dumps({"version": "v1alpha1", "metadata": {
+    "name": "schematic", "version": sid, "author": "sbc-quartz (https://ghcr.io/s-collison)",
+    "description": "Schematic this image was built from.", "extra_info": info,
+    "compatibility": {"talos": {"version": ">= 1.0.0"}}}}).encode()
+with tarfile.open(out, "w", format=tarfile.USTAR_FORMAT) as t:
+    def add(name, data=None):
+        i = tarfile.TarInfo(name)
+        if data is None: i.type, i.mode = tarfile.DIRTYPE, 0o755
+        else: i.size, i.mode = len(data), 0o644
+        t.addfile(i, io.BytesIO(data or b""))
+    add("manifest.yaml", m)
+    d = "rootfs"
+    for part in ("", "usr", "local", "share", "schematic"):
+        d = d + "/" + part if part else d
+        add(d)
+    add(d + "/" + sid, b"")
+' "$2" "$3"
+}
+
 # imager <outdir> <args...>
 imager() {
   local out="$1"; shift
@@ -96,6 +135,24 @@ imager() {
 }
 
 entry_for() { printf '%s\n' "${TABLE}" | grep "^$1:" || true; }
+
+push_factory() {
+  ID="$(schematic_yaml "${BOARD}" | sha256sum | cut -d' ' -f1)"
+  REF="${FACTORY_REPO}/metal-installer/${ID}:${TALOS_VERSION}"
+  MARK="${FACTORY_REPO}/schematic-marker:${ID}"
+  echo ">> installer ${REF}"
+  schematic_yaml "${BOARD}"
+  rm -rf "${WORK}"; mkdir -p "${WORK}"
+  schematic_layer "${BOARD}" "${ID}" "${WORK}/marker.tar" || return 1
+  crane() { docker run --rm ${DOCKER_ARGS[@]+"${DOCKER_ARGS[@]}"} -v "${WORK}:/out" "${CRANE}" "$@"; }
+  crane append --new_layer /out/marker.tar --new_tag "${MARK}" || return 1
+  crane mutate "${MARK}" --set-platform linux/arm64 --tag "${MARK}" || return 1
+  imager "${WORK}" installer --arch arm64 ${OVERLAY_OPTS[@]+"${OVERLAY_OPTS[@]}"} \
+    --overlay-image "${OVERLAY_IMAGE}" --overlay-name "${BOARD}" \
+    ${EXT_ARGS[@]+"${EXT_ARGS[@]}"} --system-extension-image "${MARK}" || return 1
+  crane push /out/installer-arm64.tar "${REF}" || return 1
+  echo "${REF}" >> "${OUT}/installer-refs.txt"
+}
 
 build_one() {
 BOARD="$1"
@@ -174,7 +231,11 @@ if [ -n "${INSTALLER_REPO}" ]; then
     ${EXT_ARGS[@]+"${EXT_ARGS[@]}"} || return 1
   docker run --rm ${DOCKER_ARGS[@]+"${DOCKER_ARGS[@]}"} -v "${WORK}:/out" "${CRANE}" \
     push /out/installer-arm64.tar "${REF}" || return 1
+  echo "${REF}" >> "${OUT}/installer-refs.txt"
 fi
+
+# Never fails the build: the plain installer is already pushed.
+[ -z "${FACTORY_REPO}" ] || push_factory || echo "::warning::${BOARD}: Factory-style installer not published"
 rm -rf "${WORK}"
 }
 

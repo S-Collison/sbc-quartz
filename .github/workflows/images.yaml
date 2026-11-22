@@ -220,6 +220,7 @@ jobs:
           MODULE_SIG_ENFORCE: ${{ needs.resolve.outputs.custom_base == 'true' && '0' || '1' }}
           OVERLAY_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }}
           INSTALLER_REPO: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-installer
+          FACTORY_REPO: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}
         run: |
           if [ "${{ needs.resolve.outputs.netboot }}" = true ] && [ "${{ matrix.board }}" = quartz64-a ]; then export NETBOOT=1; fi
           bash hack/build-image.sh "${{ matrix.board }}"
@@ -227,9 +228,10 @@ jobs:
       - name: Sign installer (keyless)
         continue-on-error: true
         run: |
-          ref="${REGISTRY}/${{ needs.resolve.outputs.owner }}/talos-installer-${{ matrix.board }}:${{ needs.resolve.outputs.talos }}"
-          digest="$(docker buildx imagetools inspect "${ref}" --format '{{json .Manifest}}' | jq -r .digest)"
-          cosign sign --yes "${ref%:*}@${digest}"
+          while read -r ref; do
+            digest="$(docker buildx imagetools inspect "${ref}" --format '{{json .Manifest}}' | jq -r .digest)"
+            cosign sign --yes "${ref%:*}@${digest}"
+          done < _out/installer-refs.txt
       - name: Checksums
         run: cd _out && for f in *.raw.xz *.tar.gz; do [ -e "$f" ] && sha256sum "$f" > "$f.sha256"; done; ls -la
       - uses: actions/upload-artifact@v7
@@ -261,6 +263,7 @@ jobs:
           FLAVOR: media
           OVERLAY_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/sbc-quartz:${{ needs.resolve.outputs.overlay_tag }}
           INSTALLER_REPO: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-installer
+          FACTORY_REPO: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}
           IMAGER_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-media/imager:${{ needs.resolve.outputs.talos }}
           BASE_INSTALLER_IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.owner }}/talos-media/installer-base:${{ needs.resolve.outputs.talos }}
           # our kernel: enforcement off, so that extensions signed by Sidero load on it
@@ -272,9 +275,10 @@ jobs:
       - name: Sign installer (keyless)
         continue-on-error: true
         run: |
-          ref="${REGISTRY}/${{ needs.resolve.outputs.owner }}/talos-installer-${{ matrix.board }}-media:${{ needs.resolve.outputs.talos }}"
-          digest="$(docker buildx imagetools inspect "${ref}" --format '{{json .Manifest}}' | jq -r .digest)"
-          cosign sign --yes "${ref%:*}@${digest}"
+          while read -r ref; do
+            digest="$(docker buildx imagetools inspect "${ref}" --format '{{json .Manifest}}' | jq -r .digest)"
+            cosign sign --yes "${ref%:*}@${digest}"
+          done < _out/installer-refs.txt
       - name: Checksums
         run: cd _out && for f in *.raw.xz *.tar.gz; do [ -e "$f" ] && sha256sum "$f" > "$f.sha256"; done; ls -la
       - uses: actions/upload-artifact@v7
