@@ -55,7 +55,7 @@ COMMON_ARGS += $(BUILD_ARGS)
 # extra variables
 
 PKGS_PREFIX ?= ghcr.io/siderolabs
-PKGS ?= v1.14.0-59-ge6ad19d
+PKGS ?= v1.14.0-66-ga1a4897
 TOOLS_PREFIX ?= ghcr.io/siderolabs
 TOOLS ?= v1.15.0-alpha.0-16-g54f72f9
 
